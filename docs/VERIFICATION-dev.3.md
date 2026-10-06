@@ -17,7 +17,7 @@
 
 - `dotnet run --project tests/CoreChecks/CoreChecks.csproj -c Release`: 7/7 PASS。保存・検索の既存検証に加え、旧マウス無効設定の保持、旧有効設定の移行、新パターンの書出し・再読込、不正パターンの拒否を確認。隔離した一時データのみを使用。
 - `dotnet run --project tests/MouseChecks/MouseChecks.csproj -c Release`: 7/7 PASS。短押しのクリック復元、ホイール→右・右→左の順序、サイドボタンとの区別、移動閾値、移動後の呼び出し禁止、先行ボタンの限定、キャンセルを確認。OS入力は注入しない。
-- UI確認用のRelease / win-x64 / framework-dependent publish成功。警告・エラーなし。最終配布は、その後の入力復元と終了処理の小修正も含むソースからビルドする。
+- UI確認用のRelease / win-x64 / framework-dependent publish成功。警告・エラーなし。最終配布は、その後の入力復元・終了処理・検索範囲の修正も含むコミットからビルドした。
 - 入力復元の読み取りレビューで、ホイール単発の条件、サイドボタンを左右と区別する処理、第二Down位置での移動確認、SendInput部分失敗、Up処理中例外を修正。
 - `git diff --check`: 空白エラーなし。
 
@@ -40,5 +40,16 @@
 単発ボタンを選ぶ場合は、そのボタンの既存の機能を置き換える。組み合わせ方式も最初の押下を保留するため、すべてのアプリで干渉しないとは保証しない。使用アプリに応じて設定を切り替える。
 
 管理者権限など安全に入力を復元できると確認できない対象と自アプリでは認識しない。入力再生の部分失敗では、Downの挿入有無に応じて孤立Upを防ぐ。UIPI拒否をSendInputの戻り値だけで確定したとは扱わない。
+
+## 配布
+
+- `scripts/Publish.ps1`: Release / win-x64 / framework-dependent publish成功。警告・エラーなし。
+- ZIP: `artifacts/releases/LinkLauncher-v0.1.0-dev.3-win-x64.zip`、157,586 bytes（約153.9 KiB）。展開済みフォルダは337,563 bytes（約329.7 KiB）。
+- Versionは0.1.0-dev.3、FileVersionは0.1.0.3。ProductVersionのGit SHAは`8d5d5f350393dfe8c913fc16789819c22a1126cc`で、ローカルタグ`v0.1.0-dev.3`と一致する。
+- Microsoft.NETCore.App 10.0.0とMicrosoft.WindowsDesktop.App 10.0.0を使用。ランタイム本体、ユーザーのlibrary.json、PDBを同梱しない。
+- ZIP直下のexe、dll、deps、runtimeconfig、README、導入HTML、MIT LICENSE、THIRD_PARTY_NOTICESと、`licenses/DOTNET-LICENSE.txt`を確認。
+- SHA-256記録と再計算値が一致: `2496907e5927ef59385fd93c1d452ba269b8f034895a2b7305e36a7803d20e62`。
+- dev.1/dev.2のZIPハッシュが従来の値と一致し、旧フォルダと旧タグを保持していることを確認。
+- 検証専用プロセス終了後、配布フォルダのexeを通常データで起動。起動直後のプロセス継続を確認（PID 34600）。
 
 GitHubへの公開は行っていない。
