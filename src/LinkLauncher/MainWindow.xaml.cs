@@ -203,15 +203,12 @@ public partial class MainWindow : Window
         SyncCategorySelection();
         bool searching = !string.IsNullOrWhiteSpace(SearchBox.Text);
         IEnumerable<LinkItem> scope = _library.Links;
-        if (!searching)
+        if (_view == "favorite") scope = scope.Where(l => l.IsFavorite);
+        else if (_view == "recent") scope = scope.Where(l => l.LastOpenedUtc.HasValue);
+        else if (_categoryId != null)
         {
-            if (_view == "favorite") scope = scope.Where(l => l.IsFavorite);
-            else if (_view == "recent") scope = scope.Where(l => l.LastOpenedUtc.HasValue);
-            else if (_categoryId != null)
-            {
-                var ids = SearchEngine.DescendantIds(_library, _categoryId);
-                scope = scope.Where(l => ids.Contains(l.CategoryId));
-            }
+            var ids = SearchEngine.DescendantIds(_library, _categoryId);
+            scope = scope.Where(l => ids.Contains(l.CategoryId));
         }
         if (_type != "All" && Enum.TryParse<LinkKind>(_type, out var kind)) scope = scope.Where(l => l.Kind == kind);
         var results = SearchEngine.Search(_library, SearchBox.Text, scope);
@@ -221,13 +218,18 @@ public partial class MainWindow : Window
         var rows = results.Select(l => new LinkRow(l, paths.GetValueOrDefault(l.CategoryId, ""))).ToList();
         LinkList.ItemsSource = rows;
         LinkList.SelectedItem = rows.FirstOrDefault(r => r.Item.Id == selectedId) ?? rows.FirstOrDefault();
-        ViewTitle.Text = searching ? "検索結果" : _view switch
+        string scopeLabel = _view switch
         {
             "favorite" => "お気に入り", "recent" => "最近使ったリンク",
             _ => _library.Categories.FirstOrDefault(c => c.Id == _categoryId)?.Name ?? "すべてのリンク"
         };
-        ViewTitle.ToolTip = searching ? "すべてのカテゴリから検索しています。" : _categoryId != null
+        ViewTitle.Text = searching ? scopeLabel + "の検索結果" : scopeLabel;
+        SearchPlaceholder.Text = _categoryId != null ? "このカテゴリ内を検索" : _view switch
+        { "favorite" => "お気に入りの中を検索", "recent" => "最近使ったリンクの中を検索", _ => "名前・タグ・案件名を検索" };
+        System.Windows.Automation.AutomationProperties.SetName(SearchBox, scopeLabel + "を検索");
+        ViewTitle.ToolTip = _categoryId != null
             ? SearchEngine.GetCategoryPath(_library, _categoryId) + "  ·  下の階層のリンクも表示"
+            : searching ? scopeLabel + "の中から検索しています。"
             : _view switch { "favorite" => "よく使うリンクを、いつでも手元に。", "recent" => "前に開いた場所へ、すぐに戻れます。", _ => "よく使うファイルとWebを、ひとつの場所に。" };
         ResultCount.Text = rows.Count + " 件";
         EmptyPanel.Visibility = rows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;

@@ -109,7 +109,7 @@
          Stroke="{DynamicResource SearchIcon}" StrokeThickness="1.6" Stretch="Uniform" VerticalAlignment="Center" />
         <TextBox Grid.Column="1" x:Name="SearchBox" BorderThickness="0" Padding="0,5" FontSize="13" Background="Transparent"
          TextChanged="Search_TextChanged" AutomationProperties.Name="すべてのリンクを検索" />
-        <TextBlock Grid.Column="1" Text="名前・タグ・案件名を検索" Foreground="{DynamicResource SearchHint}" IsHitTestVisible="False" VerticalAlignment="Center" FontSize="12">
+        <TextBlock Grid.Column="1" x:Name="SearchPlaceholder" Text="名前・タグ・案件名を検索" Foreground="{DynamicResource SearchHint}" IsHitTestVisible="False" VerticalAlignment="Center" FontSize="12">
          <TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed" />
           <Style.Triggers><MultiDataTrigger><MultiDataTrigger.Conditions>
            <Condition Binding="{Binding Text, ElementName=SearchBox}" Value="" />
