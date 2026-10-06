@@ -27,6 +27,7 @@ public sealed class CategoryNode
     public string Path { get; init; } = "";
     public int Count { get; init; }
     public bool IsSelected { get; set; }
+    public bool IsExpanded { get; set; }
     public List<CategoryNode> Children { get; init; } = new();
 }
 
@@ -35,6 +36,9 @@ public sealed class LinkRow
     public LinkItem Item { get; }
     public string Name => Item.Name;
     public string Target => Item.Target;
+    public string Note => Item.Note;
+    public bool HasNote => !string.IsNullOrWhiteSpace(Item.Note);
+    public string CategoryName { get; }
     public string Detail { get; }
     public string Glyph => Item.Kind switch { LinkKind.Web => "↗", LinkKind.Folder => "▱", _ => "≡" };
     public string KindLabel => Item.Kind switch { LinkKind.Web => "WEB", LinkKind.Folder => "FOLDER", _ => "FILE" };
@@ -49,6 +53,7 @@ public sealed class LinkRow
     public LinkRow(LinkItem item, string categoryPath)
     {
         Item = item;
+        CategoryName = categoryPath.Split(" / ", StringSplitOptions.None).LastOrDefault() ?? "";
         Detail = categoryPath +
             (string.IsNullOrWhiteSpace(item.Tags) ? "" : "    ·    " + item.Tags);
     }
@@ -69,6 +74,9 @@ public partial class MainWindow : Window
     private bool _rebuildingTree;
     private bool _menuOpen;
     private bool _launching;
+    private bool _categoriesVisible = true;
+    private string? _pressedLinkId;
+    private Point _linkPressStart;
 
     public MainWindow(string? dataDirectory = null)
     {
@@ -197,7 +205,7 @@ public partial class MainWindow : Window
             "favorite" => "お気に入り", "recent" => "最近使ったリンク",
             _ => _library.Categories.FirstOrDefault(c => c.Id == _categoryId)?.Name ?? "すべてのリンク"
         };
-        ViewSubtitle.Text = searching ? "すべてのカテゴリから検索しています。" : _categoryId != null
+        ViewTitle.ToolTip = searching ? "すべてのカテゴリから検索しています。" : _categoryId != null
             ? SearchEngine.GetCategoryPath(_library, _categoryId) + "  ·  下の階層のリンクも表示"
             : _view switch { "favorite" => "よく使うリンクを、いつでも手元に。", "recent" => "前に開いた場所へ、すぐに戻れます。", _ => "よく使うファイルとWebを、ひとつの場所に。" };
         ResultCount.Text = rows.Count + " 件";
@@ -223,6 +231,16 @@ public partial class MainWindow : Window
         _rebuildingTree = true;
         try
         {
+            var expanded = new Dictionary<string, bool>();
+            void Remember(IEnumerable<CategoryNode> nodes)
+            {
+                foreach (var node in nodes) { expanded[node.Id] = node.IsExpanded; Remember(node.Children); }
+            }
+            if (CategoryTree.ItemsSource is IEnumerable<CategoryNode> previous) Remember(previous);
+            var ancestors = new HashSet<string>();
+            var selected = _library.Categories.FirstOrDefault(c => c.Id == _categoryId);
+            while (selected?.ParentId is string parentId && ancestors.Add(parentId))
+                selected = _library.Categories.FirstOrDefault(c => c.Id == parentId);
             var counts = _library.Links.GroupBy(l => l.CategoryId).ToDictionary(g => g.Key, g => g.Count());
             var paths = SearchEngine.GetCategoryPaths(_library);
             var children = _library.Categories.GroupBy(c => c.ParentId ?? "").ToDictionary(g => g.Key, g => g.OrderBy(c => c.Name).ToList());
@@ -230,6 +248,7 @@ public partial class MainWindow : Window
             {
                 var nodes = children.TryGetValue(c.Id, out var list) ? list.Select(Build).ToList() : new List<CategoryNode>();
                 return new CategoryNode { Id = c.Id, Name = c.Name, Path = paths.GetValueOrDefault(c.Id, ""), IsSelected = c.Id == _categoryId,
+                    IsExpanded = ancestors.Contains(c.Id) || expanded.GetValueOrDefault(c.Id, c.ParentId == null),
                     Children = nodes, Count = counts.GetValueOrDefault(c.Id) + nodes.Sum(n => n.Count) };
             }
             CategoryTree.ItemsSource = children.TryGetValue("", out var roots) ? roots.Select(Build).ToList() : new List<CategoryNode>();
@@ -237,18 +256,19 @@ public partial class MainWindow : Window
         finally { _rebuildingTree = false; }
     }
 
-    private static Brush Brush(string hex) => (Brush)new BrushConverter().ConvertFromString(hex)!;
     private static void SetNavState(Button button, bool active)
     {
-        button.Background = Brush(active ? "#29453F" : "#16232B");
-        button.Foreground = Brush(active ? "#A5E7CE" : "#C3CDD3");
+        button.SetResourceReference(Control.BackgroundProperty, active ? "SelectedSurface" : "SoftSurface");
+        button.SetResourceReference(Control.ForegroundProperty, active ? "Accent" : "Ink");
     }
 
     private void UpdateHints()
     {
-        HotkeyHint.Text = string.IsNullOrEmpty(_desktop.HotkeyLabel) ? "ショートカット未登録" : _desktop.HotkeyLabel;
-        GestureHint.Text = _library.Settings.GestureEnabled ? "右ドラッグ ↑ で呼び出し"
-            : _library.Settings.MouseChordEnabled ? "Ctrl ＋ 右クリックで呼び出し" : "トレイからも呼び出せます";
+        string hotkey = string.IsNullOrEmpty(_desktop.HotkeyLabel) ? "ショートカット未登録" : _desktop.HotkeyLabel;
+        ActivationHint.Text = hotkey + (_library.Settings.GestureEnabled ? "  ·  右↑" : "");
+        ActivationHint.ToolTip = hotkey + " で呼び出し" +
+            (_library.Settings.GestureEnabled ? "\n右ボタンを押して上へ70px動かし、1.4秒以内に離す" : "") +
+            (_library.Settings.MouseChordEnabled ? "\nCtrl + 右クリックで呼び出し" : "") + "\n↑↓ 選択 / Enter 開く / Esc 閉じる";
     }
 
     private void ShowNotice(string message, bool error = false)
@@ -326,11 +346,26 @@ public partial class MainWindow : Window
         finally { _launching = false; }
     }
 
-    private async void LinkList_MouseUp(object sender, MouseButtonEventArgs e)
+    private void LinkList_MouseDown(object sender, MouseButtonEventArgs e)
     {
+        _pressedLinkId = null;
         if (FindAncestor<Button>(e.OriginalSource as DependencyObject) != null) return;
         var container = FindAncestor<ListBoxItem>(e.OriginalSource as DependencyObject);
-        if (container?.DataContext is LinkRow row) { e.Handled = true; await Launch(row.Item); }
+        if (container?.DataContext is LinkRow row)
+        { _pressedLinkId = row.Item.Id; _linkPressStart = e.GetPosition(LinkList); }
+    }
+
+    private async void LinkList_MouseUp(object sender, MouseButtonEventArgs e)
+    {
+        string? pressedId = _pressedLinkId;
+        _pressedLinkId = null;
+        if (FindAncestor<Button>(e.OriginalSource as DependencyObject) != null) return;
+        var container = FindAncestor<ListBoxItem>(e.OriginalSource as DependencyObject);
+        var point = e.GetPosition(LinkList);
+        if (container?.DataContext is LinkRow row && row.Item.Id == pressedId &&
+            Math.Abs(point.X - _linkPressStart.X) <= SystemParameters.MinimumHorizontalDragDistance &&
+            Math.Abs(point.Y - _linkPressStart.Y) <= SystemParameters.MinimumVerticalDragDistance)
+        { e.Handled = true; await Launch(row.Item); }
     }
 
     private void Favorite_Click(object sender, RoutedEventArgs e)
@@ -343,9 +378,11 @@ public partial class MainWindow : Window
     private ContextMenu Menu(FrameworkElement target, params (string Label, Action Action)[] actions)
     {
         var menu = new ContextMenu { PlacementTarget = target };
+        menu.SetResourceReference(FrameworkElement.StyleProperty, typeof(ContextMenu));
         foreach (var action in actions)
         {
             var item = new MenuItem { Header = action.Label };
+            item.SetResourceReference(FrameworkElement.StyleProperty, typeof(MenuItem));
             item.Click += (_, _) => action.Action(); menu.Items.Add(item);
         }
         menu.Opened += (_, _) => _menuOpen = true;
@@ -405,6 +442,15 @@ public partial class MainWindow : Window
     private void Search_TextChanged(object sender, TextChangedEventArgs e) => Refresh();
     private void ClearSearch_Click(object sender, RoutedEventArgs e) { SearchBox.Clear(); SearchBox.Focus(); }
     private void Type_Click(object sender, RoutedEventArgs e) { _type = (string)((Button)sender).Tag; Refresh(); }
+    private void Categories_Click(object sender, RoutedEventArgs e)
+    {
+        double currentWidth = ActualWidth;
+        _categoriesVisible = !_categoriesVisible;
+        CategoryPane.Visibility = _categoriesVisible ? Visibility.Visible : Visibility.Collapsed;
+        CategoryColumn.Width = new GridLength(_categoriesVisible ? 164 : 0);
+        MinWidth = _categoriesVisible ? 520 : 356;
+        Width = Math.Max(MinWidth, currentWidth + (_categoriesVisible ? 164 : -164));
+    }
     private void Pin_Click(object sender, RoutedEventArgs e)
     {
         _pinned = !_pinned; PinButton.Content = _pinned ? "固定中" : "固定";
@@ -532,6 +578,7 @@ public partial class MainWindow : Window
     private void DismissNotice_Click(object sender, RoutedEventArgs e) => NoticePanel.Visibility = Visibility.Collapsed;
     private void Window_Deactivated(object? sender, EventArgs e)
     {
+        _pressedLinkId = null;
         if (!_ready || _modalDepth > 0 || _pinned || _menuOpen || !_library.Settings.DismissOnDeactivate) return;
         Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() =>
         { if (!IsActive && _modalDepth == 0 && !_pinned && !_menuOpen) Hide(); }));
