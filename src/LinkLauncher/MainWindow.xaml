@@ -1,0 +1,212 @@
+<Window x:Class="LinkLauncher.MainWindow"
+ xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+ xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+ xmlns:local="clr-namespace:LinkLauncher"
+ xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
+ Title="LinkLauncher" Width="1020" Height="710" MinWidth="840" MinHeight="540"
+ WindowStyle="None" ResizeMode="CanResize" WindowStartupLocation="CenterScreen"
+ AllowDrop="True" PreviewKeyDown="Window_KeyDown" Drop="Window_Drop" DragOver="Window_DragOver"
+ Deactivated="Window_Deactivated" Closing="Window_Closing">
+ <shell:WindowChrome.WindowChrome>
+  <shell:WindowChrome CaptionHeight="0" CornerRadius="12" GlassFrameThickness="0" ResizeBorderThickness="5" />
+ </shell:WindowChrome.WindowChrome>
+ <Border BorderBrush="{DynamicResource Border}" BorderThickness="1" CornerRadius="11" Background="{DynamicResource WindowBackground}">
+  <Grid>
+   <Grid.ColumnDefinitions><ColumnDefinition Width="226" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+   <Border Grid.Column="0" Background="#16232B" CornerRadius="10,0,0,10">
+    <Grid Margin="16,0">
+     <Grid.RowDefinitions>
+      <RowDefinition Height="86" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
+      <RowDefinition Height="*" /><RowDefinition Height="Auto" /><RowDefinition Height="76" />
+     </Grid.RowDefinitions>
+     <Grid Grid.Row="0" MouseLeftButtonDown="Title_MouseDown" Background="Transparent">
+      <Grid.ColumnDefinitions><ColumnDefinition Width="44" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+      <Border Background="#8FE0C5" Width="34" Height="34" CornerRadius="10" HorizontalAlignment="Left" VerticalAlignment="Center">
+       <Path Data="M 7,7 L 7,23 L 22,23 M 14,7 L 25,7 L 25,17 M 13,19 L 25,7"
+        Stroke="#16232B" StrokeThickness="2.5" StrokeStartLineCap="Round" StrokeEndLineCap="Round" />
+      </Border>
+      <StackPanel Grid.Column="1" VerticalAlignment="Center">
+       <TextBlock Text="LinkLauncher" FontSize="18" FontWeight="SemiBold" Foreground="#F3F8FA" />
+       <TextBlock Text="いつもの場所へ、すぐに。" FontSize="10" Foreground="#879FAE" Margin="0,3,0,0" />
+      </StackPanel>
+     </Grid>
+     <StackPanel Grid.Row="1">
+      <Button x:Name="AllButton" Style="{StaticResource SidebarButton}" Click="All_Click" Margin="0,0,0,3">
+       <TextBlock Text="▦    すべてのリンク" />
+      </Button>
+      <Button x:Name="FavoritesButton" Style="{StaticResource SidebarButton}" Click="Favorites_Click" Margin="0,0,0,3">
+       <TextBlock Text="☆    お気に入り" />
+      </Button>
+      <Button x:Name="RecentButton" Style="{StaticResource SidebarButton}" Click="Recent_Click">
+       <TextBlock Text="◷    最近使ったリンク" />
+      </Button>
+     </StackPanel>
+     <DockPanel Grid.Row="2" Margin="12,26,2,9">
+      <Button DockPanel.Dock="Right" Content="＋" Padding="7,1" FontSize="19" Foreground="#AFBFCA"
+       Style="{StaticResource QuietButton}" Click="AddCategory_Click" ToolTip="カテゴリを追加" AutomationProperties.Name="カテゴリを追加" />
+      <TextBlock Text="カテゴリ" Foreground="#839EAD" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center" />
+     </DockPanel>
+     <TreeView x:Name="CategoryTree" Grid.Row="3" Background="Transparent" BorderThickness="0"
+      Foreground="#CBD5DC" SelectedItemChanged="CategoryTree_SelectedItemChanged" HorizontalContentAlignment="Stretch">
+      <TreeView.Resources>
+       <Style TargetType="TreeViewItem">
+        <Setter Property="IsSelected" Value="{Binding IsSelected, Mode=TwoWay}" />
+        <Setter Property="IsExpanded" Value="True" />
+        <Setter Property="Foreground" Value="#CBD5DC" />
+        <Setter Property="Padding" Value="4,8" />
+        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+        <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="TreeViewItem">
+         <Grid>
+          <Grid.ColumnDefinitions><ColumnDefinition Width="15" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+          <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+          <ToggleButton x:Name="Expander" Width="13" Height="22" Background="Transparent" BorderThickness="0" VerticalAlignment="Center"
+           IsChecked="{Binding IsExpanded, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}" ClickMode="Press" Focusable="False">
+           <ToggleButton.Template><ControlTemplate TargetType="ToggleButton">
+            <Border Background="Transparent"><Path x:Name="Arrow" Data="M 3,2 L 7,6 L 3,10" Stroke="#8DA4B2" StrokeThickness="1.5"
+             Width="9" Height="12" HorizontalAlignment="Center" VerticalAlignment="Center" RenderTransformOrigin="0.5,0.5" /></Border>
+            <ControlTemplate.Triggers><Trigger Property="IsChecked" Value="True"><Setter TargetName="Arrow" Property="RenderTransform"><Setter.Value><RotateTransform Angle="90" /></Setter.Value></Setter></Trigger></ControlTemplate.Triggers>
+           </ControlTemplate></ToggleButton.Template>
+          </ToggleButton>
+          <Border x:Name="HeaderFrame" Grid.Column="1" Background="Transparent" CornerRadius="5" Padding="4,8">
+           <ContentPresenter x:Name="PART_Header" ContentSource="Header" HorizontalAlignment="Stretch" />
+          </Border>
+          <ItemsPresenter x:Name="ChildItems" Grid.Row="1" Grid.Column="1" />
+         </Grid>
+         <ControlTemplate.Triggers>
+          <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="HeaderFrame" Property="Background" Value="#25343E" /></Trigger>
+          <Trigger Property="IsSelected" Value="True"><Setter TargetName="HeaderFrame" Property="Background" Value="#29453F" /><Setter Property="Foreground" Value="#A5E7CE" /></Trigger>
+          <Trigger Property="IsExpanded" Value="False"><Setter TargetName="ChildItems" Property="Visibility" Value="Collapsed" /></Trigger>
+          <Trigger Property="HasItems" Value="False"><Setter TargetName="Expander" Property="Visibility" Value="Hidden" /></Trigger>
+         </ControlTemplate.Triggers>
+        </ControlTemplate></Setter.Value></Setter>
+       </Style>
+      </TreeView.Resources>
+      <TreeView.ItemTemplate>
+       <HierarchicalDataTemplate DataType="{x:Type local:CategoryNode}" ItemsSource="{Binding Children}">
+        <Grid Background="Transparent" MouseRightButtonDown="Category_RightClick">
+         <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+         <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" MaxWidth="142" ToolTip="{Binding Path}" />
+         <TextBlock Grid.Column="1" Text="{Binding Count}" Foreground="#718B9A" FontSize="10" Margin="8,0,2,0" VerticalAlignment="Center" />
+        </Grid>
+       </HierarchicalDataTemplate>
+      </TreeView.ItemTemplate>
+     </TreeView>
+     <Border Grid.Row="4" Background="#1E333B" CornerRadius="8" Padding="12" Margin="1,12,1,4">
+      <StackPanel>
+       <TextBlock Text="右ドラッグ ↑ で呼び出し" x:Name="GestureHint" Foreground="#9FDBCA" FontSize="11" />
+       <TextBlock x:Name="HotkeyHint" Text="Ctrl + Alt + Space" Foreground="#93AAB7" FontSize="11" Margin="0,5,0,0" />
+      </StackPanel>
+     </Border>
+     <Grid Grid.Row="5">
+      <Button HorizontalAlignment="Left" Style="{StaticResource SidebarButton}" Padding="11,10" Click="Settings_Click" Content="⚙    設定" />
+      <TextBlock x:Name="BuildLabel" HorizontalAlignment="Right" VerticalAlignment="Center" Foreground="#5E798A" FontSize="11" Margin="0,0,8,0" />
+     </Grid>
+    </Grid>
+   </Border>
+   <Grid Grid.Column="1">
+    <Grid.RowDefinitions>
+     <RowDefinition Height="56" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
+     <RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /><RowDefinition Height="44" />
+    </Grid.RowDefinitions>
+    <Grid Grid.Row="0" MouseLeftButtonDown="Title_MouseDown" Background="Transparent" Margin="25,0,12,0">
+     <TextBlock Text="YOUR LINKS, ONE PLACE" VerticalAlignment="Center" Foreground="{DynamicResource FooterInk}" FontSize="10" FontWeight="SemiBold" />
+     <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+      <Button x:Name="PinButton" Content="固定" Style="{StaticResource QuietButton}" Padding="9,6" Click="Pin_Click" ToolTip="別の画面をクリックしても閉じない" />
+      <Button Content="−" Style="{StaticResource QuietButton}" Padding="12,5" Click="Hide_Click" ToolTip="トレイにしまう" AutomationProperties.Name="トレイにしまう" />
+      <Button Content="×" Style="{StaticResource QuietButton}" Padding="12,5" FontSize="20" Click="Hide_Click" ToolTip="閉じて常駐" AutomationProperties.Name="閉じて常駐" />
+     </StackPanel>
+    </Grid>
+    <Grid Grid.Row="1" Margin="28,2,28,20">
+     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+     <StackPanel>
+      <TextBlock x:Name="ViewTitle" Text="すべてのリンク" FontSize="26" FontWeight="SemiBold" />
+      <TextBlock x:Name="ViewSubtitle" Text="よく使うファイルとWebを、ひとつの場所に。" Foreground="{DynamicResource Muted}" FontSize="12" Margin="0,7,0,0" />
+     </StackPanel>
+     <Button Grid.Column="1" Style="{StaticResource PrimaryButton}" Content="＋  リンクを追加" Click="AddLink_Click" VerticalAlignment="Center" Margin="10,0,0,0" />
+    </Grid>
+    <Border Grid.Row="2" Margin="28,0,28,18" Background="{DynamicResource Surface}" CornerRadius="9" BorderBrush="{DynamicResource Border}" BorderThickness="1">
+     <Grid>
+      <Grid.ColumnDefinitions><ColumnDefinition Width="42" /><ColumnDefinition Width="*" /><ColumnDefinition Width="42" /></Grid.ColumnDefinitions>
+      <Path Grid.Column="0" Data="M 8,2 A 6,6 0 1 0 8,14 A 6,6 0 1 0 8,2 M 12,12 L 18,18"
+       Width="20" Height="20" Stroke="{DynamicResource SearchIcon}" StrokeThickness="1.6" Stretch="Uniform" VerticalAlignment="Center" />
+      <TextBox Grid.Column="1" x:Name="SearchBox" BorderThickness="0" Padding="0,15" FontSize="15" Background="Transparent"
+       TextChanged="Search_TextChanged" AutomationProperties.Name="すべてのリンクを検索" />
+      <TextBlock Grid.Column="1" Text="リンク名・タグ・案件名で検索" Foreground="{DynamicResource SearchHint}" IsHitTestVisible="False" VerticalAlignment="Center" FontSize="14">
+       <TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed" />
+        <Style.Triggers><DataTrigger Binding="{Binding Text, ElementName=SearchBox}" Value=""><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers>
+       </Style></TextBlock.Style>
+      </TextBlock>
+      <Button Grid.Column="2" Content="×" Style="{StaticResource QuietButton}" Padding="9" Click="ClearSearch_Click" ToolTip="検索をクリア" AutomationProperties.Name="検索をクリア" />
+     </Grid>
+    </Border>
+    <Grid Grid.Row="3" Margin="28,0,28,12">
+     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+     <StackPanel Orientation="Horizontal">
+      <Button x:Name="TypeAll" Content="すべて" Tag="All" Click="Type_Click" Padding="12,5" Margin="0,0,7,0" />
+      <Button x:Name="TypeWeb" Content="Web" Tag="Web" Click="Type_Click" Padding="12,5" Margin="0,0,7,0" />
+      <Button x:Name="TypeFile" Content="ファイル" Tag="File" Click="Type_Click" Padding="12,5" Margin="0,0,7,0" />
+      <Button x:Name="TypeFolder" Content="フォルダ" Tag="Folder" Click="Type_Click" Padding="12,5" />
+     </StackPanel>
+     <TextBlock Grid.Column="1" x:Name="ResultCount" VerticalAlignment="Center" Foreground="{DynamicResource Muted}" FontSize="12" />
+    </Grid>
+    <Grid Grid.Row="4" Margin="28,0,28,0">
+     <ListBox x:Name="LinkList" Background="Transparent" Foreground="{DynamicResource Ink}" BorderThickness="0" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+      ScrollViewer.VerticalScrollBarVisibility="Auto" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
+      PreviewMouseLeftButtonUp="LinkList_MouseUp" PreviewMouseRightButtonDown="LinkList_RightClick">
+      <ListBox.ItemContainerStyle><Style TargetType="ListBoxItem">
+       <Setter Property="Padding" Value="0" /><Setter Property="Margin" Value="0,0,0,8" /><Setter Property="HorizontalContentAlignment" Value="Stretch" />
+       <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ListBoxItem">
+        <Border x:Name="Row" Background="{DynamicResource Surface}" BorderBrush="{DynamicResource Border}" BorderThickness="1" CornerRadius="9" Padding="13,13">
+         <ContentPresenter />
+        </Border>
+        <ControlTemplate.Triggers>
+         <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Row" Property="Background" Value="{DynamicResource HoverSurface}" /><Setter TargetName="Row" Property="BorderBrush" Value="{DynamicResource HoverBorder}" /></Trigger>
+         <Trigger Property="IsSelected" Value="True"><Setter TargetName="Row" Property="Background" Value="{DynamicResource SelectedSurface}" /><Setter TargetName="Row" Property="BorderBrush" Value="{DynamicResource SelectedBorder}" /></Trigger>
+        </ControlTemplate.Triggers>
+       </ControlTemplate></Setter.Value></Setter>
+      </Style></ListBox.ItemContainerStyle>
+      <ListBox.ItemTemplate><DataTemplate DataType="{x:Type local:LinkRow}">
+       <Grid Cursor="Hand">
+        <Grid.ColumnDefinitions><ColumnDefinition Width="48" /><ColumnDefinition Width="*" /><ColumnDefinition Width="38" /><ColumnDefinition Width="30" /></Grid.ColumnDefinitions>
+        <Border Width="35" Height="38" Background="{Binding IconBackground}" CornerRadius="8" HorizontalAlignment="Left" VerticalAlignment="Center">
+         <TextBlock Text="{Binding Glyph}" FontSize="15" Foreground="{Binding IconForeground}" FontWeight="SemiBold" VerticalAlignment="Center" HorizontalAlignment="Center" />
+        </Border>
+        <StackPanel Grid.Column="1">
+         <DockPanel LastChildFill="True">
+          <Border DockPanel.Dock="Right" Background="{DynamicResource KindSurface}" CornerRadius="4" Padding="6,2" Margin="8,0,5,0">
+           <TextBlock Text="{Binding KindLabel}" Foreground="{DynamicResource KindInk}" FontSize="9" />
+          </Border>
+          <TextBlock Text="{Binding Name}" FontSize="15" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" ToolTip="{Binding Name}" />
+         </DockPanel>
+         <TextBlock Text="{Binding Target}" Foreground="{DynamicResource Muted}" FontSize="11" TextTrimming="CharacterEllipsis" ToolTip="{Binding Target}" Margin="0,3,0,0" />
+         <TextBlock Text="{Binding Detail}" Foreground="{DynamicResource DetailInk}" FontSize="10" TextTrimming="CharacterEllipsis" Margin="0,4,0,0" />
+        </StackPanel>
+        <Button Grid.Column="2" Content="{Binding FavoriteGlyph}" Foreground="{Binding FavoriteForeground}" Style="{StaticResource QuietButton}"
+         FontSize="20" Padding="4" Click="Favorite_Click" ToolTip="お気に入りを切り替え" AutomationProperties.Name="お気に入りを切り替え" />
+        <Button Grid.Column="3" Content="⋯" Style="{StaticResource QuietButton}" FontSize="23" Padding="3" Click="LinkMenu_Click" ToolTip="リンクの操作" AutomationProperties.Name="リンクの操作" />
+       </Grid>
+      </DataTemplate></ListBox.ItemTemplate>
+     </ListBox>
+     <StackPanel x:Name="EmptyPanel" Visibility="Collapsed" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="20">
+      <Border Background="{DynamicResource EmptySurface}" Width="68" Height="64" CornerRadius="18" HorizontalAlignment="Center" Margin="0,0,0,18">
+       <TextBlock Text="＋" Foreground="{DynamicResource EmptyInk}" FontSize="35" HorizontalAlignment="Center" VerticalAlignment="Center" />
+      </Border>
+      <TextBlock x:Name="EmptyTitle" Text="いつものリンクを登録しましょう" FontWeight="SemiBold" FontSize="17" TextAlignment="Center" />
+      <TextBlock x:Name="EmptyDescription" Text="ファイルやフォルダをここにドロップできます。" Foreground="{DynamicResource Muted}" FontSize="12" TextAlignment="Center" Margin="0,9,0,18" />
+      <Button Content="リンクを追加" Click="AddLink_Click" Style="{StaticResource PrimaryButton}" HorizontalAlignment="Center" />
+     </StackPanel>
+    </Grid>
+    <Border Grid.Row="5" x:Name="NoticePanel" Visibility="Collapsed" Background="{DynamicResource NoticeSurface}" CornerRadius="6" Padding="12,9" Margin="28,10,28,5">
+     <DockPanel><Button DockPanel.Dock="Right" Content="×" Style="{StaticResource QuietButton}" Padding="5,0" Click="DismissNotice_Click" />
+      <TextBlock x:Name="NoticeText" TextWrapping="Wrap" FontSize="12" /></DockPanel>
+    </Border>
+    <Border Grid.Row="6" BorderBrush="{DynamicResource Border}" BorderThickness="0,1,0,0" Margin="28,8,28,0">
+     <DockPanel VerticalAlignment="Center">
+      <TextBlock DockPanel.Dock="Right" Text="↑↓ 選択　 Enter 開く　 Esc 閉じる" Foreground="{DynamicResource FooterInk}" FontSize="10" />
+      <TextBlock x:Name="SaveStatus" Text="●  ローカルに保存" Foreground="{DynamicResource SaveInk}" FontSize="10" />
+     </DockPanel>
+    </Border>
+   </Grid>
+  </Grid>
+ </Border>
+</Window>

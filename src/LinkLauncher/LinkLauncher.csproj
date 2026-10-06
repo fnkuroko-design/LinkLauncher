@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <Version>0.1.0-dev.1</Version>
+    <AssemblyVersion>0.1.0.0</AssemblyVersion>
+    <FileVersion>0.1.0.1</FileVersion>
+    <Product>LinkLauncher</Product>
+    <Description>案件と種類で整理するWindows用リンクランチャー</Description>
+    <Company>LinkLauncher</Company>
+    <Authors>Fumiya</Authors>
+    <Copyright>Copyright (c) 2026 LinkLauncher contributors</Copyright>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets/LinkLauncher.ico</ApplicationIcon>
+  </PropertyGroup>
+  <ItemGroup><Resource Include="Assets/LinkLauncher.ico" /></ItemGroup>
+</Project>

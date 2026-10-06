@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LinkLauncher の使い方</title>
+  <style>
+    body { max-width: 760px; margin: 40px auto; padding: 0 22px; color: #24313a; font: 16px/1.8 "Yu Gothic UI", Meiryo, sans-serif; }
+    h1, h2 { color: #173d54; }
+    main { border: 1px solid #d8e2e8; border-radius: 12px; padding: 24px; }
+    a { color: #075e91; }
+    .note { background: #eef6fa; border-left: 4px solid #3b8fb5; padding: 12px 16px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>LinkLauncher を始める</h1>
+    <p>LinkLauncher は、ファイル・フォルダー・Web ページを案件や種類ごとに整理して開く Windows 用リンクランチャーです。</p>
+
+    <h2>起動する</h2>
+    <p>ZIP をすべて展開し、展開先のフォルダーにある <strong>LinkLauncher.exe</strong> をダブルクリックしてください。ショートカットを作る場合は、この EXE へのショートカットを作成します。</p>
+
+    <h2>.NET 10 Desktop Runtime がない場合</h2>
+    <p>LinkLauncher はアプリにランタイムを含めない軽量配布です。ランタイムが見つからない場合は、.NET apphost の標準案内が表示されます。Microsoft 公式ページで <strong>.NET Desktop Runtime 10 の Windows x64 版</strong>を選んで導入し、LinkLauncher.exe をもう一度実行してください。</p>
+    <p><a href="https://dotnet.microsoft.com/ja-jp/download/dotnet/10.0">Microsoft 公式 .NET 10 ダウンロードページ</a></p>
+    <p class="note">このアプリはランタイムのダウンロードやインストールを自動実行しません。選ぶ項目は「.NET Desktop Runtime 10」「Windows」「x64」です。</p>
+
+    <h2>基本操作</h2>
+    <ul>
+      <li>Ctrl + Alt + Space でランチャーを表示します。</li>
+      <li>通常の右クリックはそのまま使えます。右ボタンを押して上へ 70 px 以上動かし、1.4 秒以内に離すとランチャーを表示します。</li>
+      <li>検索欄からリンクを絞り込み、Enter またはリンクのクリックで開きます。</li>
+      <li>× または Esc で隠します。終了するときはタスクトレイの LinkLauncher アイコンから「終了」を選びます。</li>
+      <li>ファイル・フォルダー・URL を画面へドラッグして登録できます。登録や整理は画面のボタンから行います。</li>
+    </ul>
+
+    <h2>データとライセンス</h2>
+    <p>登録したリンクや設定はユーザーの <code>%APPDATA%\LinkLauncher\library.json</code> に保存されます。保存時に既存データのバックアップも作成します。登録先のパスや URL は個人情報を含む場合があるため、公開リポジトリには含めないでください。</p>
+    <p>ソースと独自アイコンは同梱の LICENSE（MIT）に基づいています。実行基盤の表示は THIRD_PARTY_NOTICES.md をご覧ください。</p>
+  </main>
+</body>
+</html>
