@@ -74,7 +74,27 @@ try
         Reject(() => LibraryStore.NormalizeTarget("relative.pdf"));
         Reject(() => LibraryStore.NormalizeTarget("javascript:alert(1)"));
     });
-    Console.WriteLine($"PASS {passed}/6");
+    Check("旧マウス設定の移行と新パターンの保存", () =>
+    {
+        var legacy = Path.Combine(testRoot, "legacy.json");
+        string json = JsonSerializer.Serialize(library);
+        using var document = JsonDocument.Parse(json);
+        string originalSettings = document.RootElement.GetProperty("Settings").GetRawText();
+        string legacySettings = "{\"Hotkey\":\"Ctrl + Alt + Space\",\"GestureEnabled\":false,\"MouseChordEnabled\":false}";
+        File.WriteAllText(legacy, json.Replace(originalSettings, legacySettings));
+        var migrated = store.ReadImport(legacy);
+        Require(migrated.Settings.MousePattern == MouseActivationPattern.None);
+        Require(migrated.Links.Count == library.Links.Count && migrated.Categories.Count == library.Categories.Count);
+        File.WriteAllText(legacy, json.Replace(originalSettings, legacySettings.Replace("\"GestureEnabled\":false", "\"GestureEnabled\":true")));
+        Require(store.ReadImport(legacy).Settings.MousePattern == MouseActivationPattern.MiddleThenRight);
+        migrated.Settings.MousePattern = MouseActivationPattern.RightThenLeft;
+        store.Export(migrated, legacy);
+        Require(store.ReadImport(legacy).Settings.MousePattern == MouseActivationPattern.RightThenLeft);
+        Require(!File.ReadAllText(legacy).Contains("GestureEnabled"));
+        migrated.Settings.MousePattern = (MouseActivationPattern)999;
+        Reject(() => store.Export(migrated, legacy));
+    });
+    Console.WriteLine($"PASS {passed}/7");
     return 0;
 }
 catch (Exception ex) { Console.Error.WriteLine(ex); return 1; }

@@ -96,7 +96,13 @@
      <Grid.RowDefinitions><RowDefinition Height="38" /><RowDefinition Height="31" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
      <Grid Grid.Row="0" Margin="0,0,0,4">
       <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="36" /></Grid.ColumnDefinitions>
-      <Border Background="{DynamicResource Surface}" CornerRadius="5" BorderBrush="{DynamicResource Border}" BorderThickness="1">
+      <Border x:Name="SearchFrame" Background="{DynamicResource Surface}" CornerRadius="5" BorderThickness="1"
+       PreviewMouseLeftButtonDown="SearchFrame_MouseDown">
+       <Border.Style><Style TargetType="Border"><Setter Property="BorderBrush" Value="{DynamicResource Border}" />
+        <Style.Triggers><DataTrigger Binding="{Binding IsKeyboardFocusWithin, ElementName=SearchBox}" Value="True">
+         <Setter Property="BorderBrush" Value="{DynamicResource Accent}" />
+        </DataTrigger></Style.Triggers>
+       </Style></Border.Style>
        <Grid>
         <Grid.ColumnDefinitions><ColumnDefinition Width="29" /><ColumnDefinition Width="*" /><ColumnDefinition Width="27" /></Grid.ColumnDefinitions>
         <Path Data="M 8,2 A 6,6 0 1 0 8,14 A 6,6 0 1 0 8,2 M 12,12 L 18,18" Width="15" Height="15"
@@ -105,7 +111,10 @@
          TextChanged="Search_TextChanged" AutomationProperties.Name="すべてのリンクを検索" />
         <TextBlock Grid.Column="1" Text="名前・タグ・案件名を検索" Foreground="{DynamicResource SearchHint}" IsHitTestVisible="False" VerticalAlignment="Center" FontSize="12">
          <TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed" />
-          <Style.Triggers><DataTrigger Binding="{Binding Text, ElementName=SearchBox}" Value=""><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers>
+          <Style.Triggers><MultiDataTrigger><MultiDataTrigger.Conditions>
+           <Condition Binding="{Binding Text, ElementName=SearchBox}" Value="" />
+           <Condition Binding="{Binding IsKeyboardFocusWithin, ElementName=SearchBox}" Value="False" />
+          </MultiDataTrigger.Conditions><Setter Property="Visibility" Value="Visible" /></MultiDataTrigger></Style.Triggers>
          </Style></TextBlock.Style>
         </TextBlock>
         <Button Grid.Column="2" Content="×" Style="{StaticResource QuietButton}" Padding="5,2" Click="ClearSearch_Click" ToolTip="検索をクリア" AutomationProperties.Name="検索をクリア" />

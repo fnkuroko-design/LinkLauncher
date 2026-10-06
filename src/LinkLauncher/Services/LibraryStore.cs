@@ -314,7 +314,31 @@ public sealed class LibraryStore
         }
 
         Validate(library);
+        MigrateMouseSettings(json, library.Settings);
         return library;
+    }
+
+    private static void MigrateMouseSettings(string json, LauncherSettings settings)
+    {
+        using var document = JsonDocument.Parse(json, new JsonDocumentOptions { MaxDepth = 64 });
+        if (!TryProperty(document.RootElement, "Settings", out var original) || original.ValueKind != JsonValueKind.Object ||
+            TryProperty(original, "MousePattern", out _)) return;
+
+        // dev.1/dev.2のマウス無効設定を保持。旧ジェスチャー有効時は新しい既定操作に移行する。
+        bool gestureDisabled = TryProperty(original, "GestureEnabled", out var gesture) && gesture.ValueKind == JsonValueKind.False;
+        bool chordEnabled = TryProperty(original, "MouseChordEnabled", out var chord) && chord.ValueKind == JsonValueKind.True;
+        if (gestureDisabled && !chordEnabled) settings.MousePattern = MouseActivationPattern.None;
+    }
+
+    private static bool TryProperty(JsonElement element, string name, out JsonElement value)
+    {
+        foreach (var property in element.EnumerateObject())
+        {
+            if (string.Equals(property.Name, name, StringComparison.OrdinalIgnoreCase))
+            { value = property.Value; return true; }
+        }
+        value = default;
+        return false;
     }
 
     private static string ReadUtf8Limited(string path)
@@ -457,6 +481,8 @@ public sealed class LibraryStore
         }
 
         ValidateText(library.Settings.Hotkey, 100, "ショートカット", allowEmpty: false);
+        if (!Enum.IsDefined(library.Settings.MousePattern))
+            throw new InvalidDataException("マウスの呼び出し方法が正しくありません。");
     }
 
     private static void ValidateId(string? id, string label)

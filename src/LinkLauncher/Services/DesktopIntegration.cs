@@ -7,6 +7,7 @@ using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Resources;
 using System.Windows.Threading;
+using LinkLauncher.Models;
 using DrawingIcon = System.Drawing.Icon;
 using DrawingSystemIcons = System.Drawing.SystemIcons;
 using Forms = System.Windows.Forms;
@@ -28,12 +29,22 @@ public sealed class DesktopIntegration : IDisposable
     private const int WmHotkey = 0x0312;
     private const int WhMouseLl = 14;
     private const int WmMouseMove = 0x0200;
+    private const int WmLButtonDown = 0x0201;
+    private const int WmLButtonUp = 0x0202;
     private const int WmRButtonDown = 0x0204;
     private const int WmRButtonUp = 0x0205;
+    private const int WmMButtonDown = 0x0207;
+    private const int WmMButtonUp = 0x0208;
+    private const int WmXButtonDown = 0x020B;
+    private const int WmXButtonUp = 0x020C;
     private const uint InputMouse = 0;
     private const uint MouseEventMove = 0x0001;
+    private const uint MouseEventLeftDown = 0x0002;
+    private const uint MouseEventLeftUp = 0x0004;
     private const uint MouseEventRightDown = 0x0008;
     private const uint MouseEventRightUp = 0x0010;
+    private const uint MouseEventMiddleDown = 0x0020;
+    private const uint MouseEventMiddleUp = 0x0040;
     private const uint MouseEventAbsolute = 0x8000;
     private const uint MouseEventVirtualDesk = 0x4000;
     private const int SmXVirtualScreen = 76;
@@ -47,7 +58,11 @@ public sealed class DesktopIntegration : IDisposable
     private const uint ModControl = 0x0002;
     private const uint ModShift = 0x0004;
     private const uint ModNoRepeat = 0x4000;
-    private const uint VkControl = 0x11;
+    private const uint VkLeftButton = 0x01;
+    private const uint VkRightButton = 0x02;
+    private const uint VkMiddleButton = 0x04;
+    private const uint VkXButton1 = 0x05;
+    private const uint VkXButton2 = 0x06;
     private const uint VkSpace = 0x20;
     private const uint LlMouseFlagInjected = 0x00000001;
     private const uint LlMouseFlagLowerIlInjected = 0x00000002;
@@ -55,6 +70,7 @@ public sealed class DesktopIntegration : IDisposable
     private const uint MaxHotkeyId = 0xBFFF;
 
     private static int _nextHotkeyId;
+    private static readonly HashSet<LowLevelMouseProc> ActiveMouseHookCallbacks = new();
 
     private readonly Window _window;
     private readonly Action _toggle;
@@ -73,11 +89,12 @@ public sealed class DesktopIntegration : IDisposable
     private IntPtr _mouseHook;
     private int _currentHotkeyId;
     private string _hotkeyLabel = string.Empty;
-    private bool _mouseChordEnabled;
-    private bool _gestureEnabled;
-    private readonly RightMouseGestureState _rightMouseGestureState = new();
-    private int _forwardedRightDownCount;
-    private bool _swallowPhysicalRightUp;
+    private MouseActivationPattern _mousePattern;
+    private readonly MouseActivationState _mouseActivationState = new();
+    private bool _swallowMiddleUp;
+    private bool _swallowRightUp;
+    private bool _swallowLeftUp;
+    private int _swallowXButtonUp;
     private bool _disposed;
 
     public event Action<string>? Warning;
@@ -155,7 +172,7 @@ public sealed class DesktopIntegration : IDisposable
     /// グローバルホットキーとマウス操作を設定します。ホットキー登録に失敗した場合は、
     /// 以前の登録を維持します。
     /// </summary>
-    public bool Configure(string hotkey, bool mouseChordEnabled, bool gestureEnabled)
+    public bool Configure(string hotkey, MouseActivationPattern mousePattern)
     {
         if (_disposed)
         {
@@ -180,7 +197,9 @@ public sealed class DesktopIntegration : IDisposable
             return false;
         }
 
-        bool needsMouseHook = mouseChordEnabled || gestureEnabled;
+        bool needsMouseHook = mousePattern != MouseActivationPattern.None
+            || HasSuppressedButtonUps
+            || _mouseActivationState.IsPending;
         IntPtr stagedMouseHook = IntPtr.Zero;
         if (needsMouseHook && _mouseHook == IntPtr.Zero)
         {
@@ -232,33 +251,30 @@ public sealed class DesktopIntegration : IDisposable
         if (stagedMouseHook != IntPtr.Zero)
         {
             _mouseHook = stagedMouseHook;
+            ActiveMouseHookCallbacks.Add(_mouseHookProc);
         }
 
-        bool mouseSettingsChanged = _mouseChordEnabled != mouseChordEnabled
-            || _gestureEnabled != gestureEnabled;
-        if (mouseSettingsChanged || !needsMouseHook)
+        bool mouseSettingsChanged = _mousePattern != mousePattern;
+        if (mouseSettingsChanged && _mouseActivationState.IsPending)
         {
-            bool hadPendingPress = _rightMouseGestureState.IsPending;
-            if (hadPendingPress && !RestorePendingRightPress())
+            MouseActivationButton pendingButton = _mouseActivationState.Button;
+            if (!RestorePendingButtonDown())
             {
-                _swallowPhysicalRightUp = true;
+                SetSuppressedUp(pendingButton);
             }
         }
 
-        _mouseChordEnabled = mouseChordEnabled;
-        _gestureEnabled = gestureEnabled;
-        if (!needsMouseHook)
+        _mousePattern = mousePattern;
+        if (_mouseHook != IntPtr.Zero && !ShouldKeepMouseHook)
         {
-            if (_mouseHook != IntPtr.Zero && !_swallowPhysicalRightUp)
+            if (UnhookWindowsHookEx(_mouseHook))
             {
-                if (UnhookWindowsHookEx(_mouseHook))
-                {
-                    _mouseHook = IntPtr.Zero;
-                }
-                else
-                {
-                    RaiseWarning($"マウス操作フックは無効化しましたが、OSから解除できませんでした (Win32: {Marshal.GetLastWin32Error()})。");
-                }
+                _mouseHook = IntPtr.Zero;
+                ActiveMouseHookCallbacks.Remove(_mouseHookProc);
+            }
+            else
+            {
+                RaiseWarning($"マウス操作フックは無効化しましたが、OSから解除できませんでした (Win32: {Marshal.GetLastWin32Error()})。");
             }
         }
 
@@ -324,16 +340,26 @@ public sealed class DesktopIntegration : IDisposable
         _currentHotkeyId = 0;
         _hotkeyLabel = string.Empty;
 
-        RestorePendingRightPress();
-        _swallowPhysicalRightUp = false;
-        if (_mouseHook != IntPtr.Zero)
+        if (_mouseActivationState.IsPending)
+        {
+            MouseActivationButton pendingButton = _mouseActivationState.Button;
+            if (!RestorePendingButtonDown())
+            {
+                SetSuppressedUp(pendingButton);
+            }
+        }
+
+        if (_mouseHook != IntPtr.Zero && !HasSuppressedButtonUps)
         {
             if (!UnhookWindowsHookEx(_mouseHook))
             {
                 RaiseWarning($"マウスフックを解除できませんでした (Win32: {Marshal.GetLastWin32Error()})。");
             }
-
-            _mouseHook = IntPtr.Zero;
+            else
+            {
+                _mouseHook = IntPtr.Zero;
+                ActiveMouseHookCallbacks.Remove(_mouseHookProc);
+            }
         }
 
         try
@@ -413,6 +439,7 @@ public sealed class DesktopIntegration : IDisposable
         if (!UnhookWindowsHookEx(hook))
         {
             _mouseHook = hook;
+            ActiveMouseHookCallbacks.Add(_mouseHookProc);
             RaiseWarning($"一時マウス操作フックを解除できませんでした。操作は無効のままですが、OSにフックが残っています (Win32: {Marshal.GetLastWin32Error()})。");
         }
     }
@@ -435,213 +462,111 @@ public sealed class DesktopIntegration : IDisposable
     private IntPtr MouseHookCallback(int code, IntPtr wParam, IntPtr lParam)
     {
         int message = unchecked((int)wParam.ToInt64());
-        bool rightUpBelongsToPendingPress = false;
+        if (code < 0 || _mouseHook == IntPtr.Zero)
+        {
+            return CallNextHookSafely(code, wParam, lParam);
+        }
+
+        if (_disposed)
+        {
+            TryFinishDisposedMouseHook();
+            if (_mouseHook == IntPtr.Zero)
+            {
+                return CallNextHookSafely(code, wParam, lParam);
+            }
+        }
+        else if (!ShouldKeepMouseHook)
+        {
+            UnhookMouseHookIfUnused();
+            if (_mouseHook == IntPtr.Zero)
+            {
+                return CallNextHookSafely(code, wParam, lParam);
+            }
+        }
+
+        if (!IsMouseEventRelevant(message))
+        {
+            return CallNextHookSafely(code, wParam, lParam);
+        }
+
+        bool pendingBeforeEvent = _mouseActivationState.IsPending;
+        MouseActivationButton pendingButtonBeforeEvent = pendingBeforeEvent
+            ? _mouseActivationState.Button
+            : default;
+        bool pendingUpBeingProcessed = pendingBeforeEvent
+            && ((message == WmMButtonUp && pendingButtonBeforeEvent == MouseActivationButton.Middle)
+                || (message == WmRButtonUp && pendingButtonBeforeEvent == MouseActivationButton.Right));
         try
         {
-            bool featureEnabled = _mouseChordEnabled || _gestureEnabled;
-            if (code >= 0
-                && _mouseHook != IntPtr.Zero
-                && (featureEnabled || _swallowPhysicalRightUp || _rightMouseGestureState.IsPending))
+            MSLLHOOKSTRUCT mouse = Marshal.PtrToStructure<MSLLHOOKSTRUCT>(lParam);
+            if (IsOwnReplayEvent(mouse) || IsInjectedMouseEvent(mouse))
             {
-                if (message == WmMouseMove && !_rightMouseGestureState.IsPending)
+                return CallNextHookSafely(code, wParam, lParam);
+            }
+
+            if (TryConsumeSuppressedUp(message, mouse.MouseData))
+            {
+                if (_disposed)
+                {
+                    TryFinishDisposedMouseHook();
+                }
+                else
+                {
+                    QueueUiAction(UnhookMouseHookIfUnused);
+                }
+
+                return new IntPtr(1);
+            }
+
+            if (_disposed)
+            {
+                TryFinishDisposedMouseHook();
+                return CallNextHookSafely(code, wParam, lParam);
+            }
+
+            if (message == WmMouseMove)
+            {
+                if (!_mouseActivationState.ShouldRestoreOnMove(mouse.Point.X, mouse.Point.Y))
                 {
                     return CallNextHookSafely(code, wParam, lParam);
                 }
 
-                if (message == WmMouseMove || message == WmRButtonDown || message == WmRButtonUp)
+                MouseActivationButton button = _mouseActivationState.Button;
+                MouseDragRestoreResult restore = RestorePendingPressForDrag(mouse.Point, button);
+                _mouseActivationState.Cancel();
+                if (!restore.ButtonDownInserted)
                 {
-                    MSLLHOOKSTRUCT mouse = Marshal.PtrToStructure<MSLLHOOKSTRUCT>(lParam);
-                    if (IsOwnReplayEvent(mouse))
-                    {
-                        if (message == WmRButtonDown || message == WmRButtonUp)
-                        {
-                            RecordForwardedRightButtonEvent(message);
-                        }
-
-                        return CallNextHookSafely(code, wParam, lParam);
-                    }
-
-                    if (IsInjectedMouseEvent(mouse))
-                    {
-                        if (message == WmRButtonDown)
-                        {
-                            RecordForwardedRightButtonEvent(message);
-                        }
-                        else if (message == WmRButtonUp)
-                        {
-                            if (_forwardedRightDownCount > 0)
-                            {
-                                RecordForwardedRightButtonEvent(message);
-                            }
-                            else if (_rightMouseGestureState.IsPending)
-                            {
-                                // 保留中の物理Downに対する、別プロセス発の孤立Upは対象アプリへ渡しません。
-                                return new IntPtr(1);
-                            }
-                        }
-
-                        return CallNextHookSafely(code, wParam, lParam);
-                    }
-
-                    if (message == WmRButtonUp && _swallowPhysicalRightUp)
-                    {
-                        _swallowPhysicalRightUp = false;
-                        QueueUiAction(UnhookMouseHookIfUnused);
-                        return new IntPtr(1);
-                    }
-
-                    if (message == WmRButtonDown)
-                    {
-                        _swallowPhysicalRightUp = false;
-                        if (_rightMouseGestureState.IsPending)
-                        {
-                            bool hadPendingPress = _rightMouseGestureState.IsPending;
-                            if (hadPendingPress && !RestorePendingRightPress())
-                            {
-                                _swallowPhysicalRightUp = true;
-                            }
-                        }
-
-                        if (!featureEnabled || !CanSafelyInterceptAt(mouse.Point))
-                        {
-                            RecordForwardedRightButtonEvent(message);
-                            return CallNextHookSafely(code, wParam, lParam);
-                        }
-
-                        if (!_rightMouseGestureState.TryBegin(
-                            mouse.Point.X,
-                            mouse.Point.Y,
-                            GetTickCount64(),
-                            (GetAsyncKeyState(VkControl) & 0x8000) != 0))
-                        {
-                            RecordForwardedRightButtonEvent(message);
-                            return CallNextHookSafely(code, wParam, lParam);
-                        }
-
-                        // Downを保留し、成立したジェスチャーでは通常の右クリックを発生させません。
-                        return new IntPtr(1);
-                    }
-
-                    if (message == WmMouseMove
-                        && _rightMouseGestureState.ShouldRestoreOnMove(
-                            mouse.Point.X,
-                            mouse.Point.Y,
-                            GetTickCount64(),
-                            _mouseChordEnabled,
-                            _gestureEnabled))
-                    {
-                        uint sent = RestorePendingPressForDrag(mouse.Point);
-                        if (sent >= 2)
-                        {
-                            _rightMouseGestureState.Cancel();
-                            if (sent == 3)
-                            {
-                                return new IntPtr(1);
-                            }
-
-                            if (sent == 2)
-                            {
-                                // Downまでは挿入済みです。終点Moveを追加して成功すれば物理Moveを置き換えます。
-                                if (TryCreateAbsoluteMouseMove(mouse.Point, out INPUT endMove)
-                                    && SendInput(1, new[] { endMove }, Marshal.SizeOf<INPUT>()) == 1)
-                                {
-                                    return new IntPtr(1);
-                                }
-
-                                QueueWarning($"右ドラッグ終点の再生に失敗しました (Win32: {Marshal.GetLastWin32Error()})。");
-                            }
-                        }
-                    }
-
-                    if (message == WmRButtonUp)
-                    {
-                        if (!_rightMouseGestureState.IsPending)
-                        {
-                            RecordForwardedRightButtonEvent(message);
-                            return CallNextHookSafely(code, wParam, lParam);
-                        }
-
-                        if (_forwardedRightDownCount > 0)
-                        {
-                            // 先にOSへ渡した外部Downを物理Upで閉じ、押下状態を残しません。
-                            _rightMouseGestureState.Cancel();
-                            RecordForwardedRightButtonEvent(message);
-                            return CallNextHookSafely(code, wParam, lParam);
-                        }
-
-                        rightUpBelongsToPendingPress = true;
-                        int startX = _rightMouseGestureState.StartX;
-                        int startY = _rightMouseGestureState.StartY;
-                        RightMouseReleaseAction action = _rightMouseGestureState.Release(
-                            mouse.Point.X,
-                            mouse.Point.Y,
-                            GetTickCount64(),
-                            _mouseChordEnabled,
-                            _gestureEnabled);
-
-                        if (action == RightMouseReleaseAction.Recognized)
-                        {
-                            QueueUiAction(_toggle);
-                            return new IntPtr(1);
-                        }
-
-                        if (action == RightMouseReleaseAction.ReplayClick)
-                        {
-                            if (!CanSafelyInjectAt(mouse.Point))
-                            {
-                                QueueWarning("通常の右クリックを復元できません。対象ウィンドウの権限を確認できないため、入力を注入しませんでした。");
-                                return new IntPtr(1);
-                            }
-
-                            bool safeStart = CanSafelyInjectAt(new POINT { X = startX, Y = startY });
-                            if (!safeStart)
-                            {
-                                QueueWarning("通常の右クリックを復元できません。開始位置の対象権限を確認できないため、入力を注入しませんでした。");
-                                return new IntPtr(1);
-                            }
-
-                            RightPressReplayResult replayResult = ReplayUnrecognizedRightPress(
-                                new POINT { X = startX, Y = startY },
-                                mouse.Point);
-                            if (replayResult == RightPressReplayResult.ConsumePhysicalUp)
-                            {
-                                return new IntPtr(1);
-                            }
-
-                            // 一部Downが挿入されUpの注入に失敗した場合は物理Upで閉じます。
-                            return CallNextHookSafely(code, wParam, lParam);
-                        }
-
-                        return new IntPtr(1);
-                    }
-
+                    SetSuppressedUp(button);
                 }
+
+                return restore.CurrentMoveInserted
+                    ? new IntPtr(1)
+                    : CallNextHookSafely(code, wParam, lParam);
+            }
+
+            if (IsButtonDownMessage(message))
+            {
+                return HandlePhysicalButtonDown(code, wParam, lParam, message, mouse);
+            }
+
+            if (IsButtonUpMessage(message))
+            {
+                return HandlePhysicalButtonUp(code, wParam, lParam, message, mouse);
             }
         }
         catch (Exception exception)
         {
-            if (message == WmRButtonDown && _rightMouseGestureState.Cancel())
+            _mouseActivationState.Cancel();
+            if (pendingUpBeingProcessed)
             {
-                // この例外経路ではまだ物理Downを抑止していないため、そのままOSへ渡します。
+                // DownをOSへ渡していないため、現在のUpだけを抑止します。
+                QueueWarning($"マウス操作を復元できませんでした: {exception.Message}");
+                return new IntPtr(1);
             }
-            else if (message == WmRButtonUp)
-            {
-                bool hadPendingDown = _rightMouseGestureState.Cancel();
-                if (hadPendingDown || rightUpBelongsToPendingPress)
-                {
-                    if (rightUpBelongsToPendingPress && SendRightButtonUp() == 1)
-                    {
-                        QueueWarning($"マウス操作の復元処理でエラーが発生しました: {exception.Message}");
-                        return new IntPtr(1);
-                    }
 
-                    if (hadPendingDown)
-                    {
-                        // DownをOSへ渡していないため、このUpも抑止して不対イベントを防ぎます。
-                        QueueWarning($"マウス操作フックでエラーが発生しました: {exception.Message}");
-                        return new IntPtr(1);
-                    }
-                }
+            if (pendingBeforeEvent)
+            {
+                SetSuppressedUp(pendingButtonBeforeEvent);
             }
 
             QueueWarning($"マウス操作フックでエラーが発生しました: {exception.Message}");
@@ -650,182 +575,366 @@ public sealed class DesktopIntegration : IDisposable
         return CallNextHookSafely(code, wParam, lParam);
     }
 
-    private bool RestorePendingRightPress()
+    private IntPtr HandlePhysicalButtonDown(
+        int code,
+        IntPtr wParam,
+        IntPtr lParam,
+        int message,
+        MSLLHOOKSTRUCT mouse)
     {
-        if (!_rightMouseGestureState.IsPending)
+        if (_mouseActivationState.IsPending)
+        {
+            MouseActivationButton primaryButton = _mouseActivationState.Button;
+            MouseActivationButton secondButton = GetActivationButton(message, mouse.MouseData);
+            if (_mouseActivationState.ShouldRestoreOnMove(mouse.Point.X, mouse.Point.Y))
+            {
+                MouseDragRestoreResult restore = RestorePendingPressForDrag(mouse.Point, primaryButton);
+                _mouseActivationState.Cancel();
+                if (!restore.ButtonDownInserted)
+                {
+                    SetSuppressedUp(primaryButton);
+                }
+
+                return CallNextHookSafely(code, wParam, lParam);
+            }
+
+            if (_mouseActivationState.IsExpectedChord(_mousePattern, secondButton))
+            {
+                if (!AreOtherMouseButtonsDownExcept(primaryButton, secondButton)
+                    && CanSafelyInterceptAt(mouse.Point))
+                {
+                    _mouseActivationState.Cancel();
+                    SetSuppressedUp(primaryButton);
+                    SetSuppressedUp(secondButton);
+                    QueueUiAction(_toggle);
+                    return new IntPtr(1);
+                }
+
+                if (!RestorePendingButtonDown())
+                {
+                    SetSuppressedUp(primaryButton);
+                }
+
+                return CallNextHookSafely(code, wParam, lParam);
+            }
+
+            if (!RestorePendingButtonDown())
+            {
+                SetSuppressedUp(primaryButton);
+            }
+
+            return CallNextHookSafely(code, wParam, lParam);
+        }
+
+        if (message == WmMButtonDown)
+        {
+            if (_mousePattern == MouseActivationPattern.MiddleClick)
+            {
+                if (!AreOtherMouseButtonsDownExcept(MouseActivationButton.Middle)
+                    && CanSafelyInterceptAt(mouse.Point))
+                {
+                    _swallowMiddleUp = true;
+                    QueueUiAction(_toggle);
+                    return new IntPtr(1);
+                }
+
+                return CallNextHookSafely(code, wParam, lParam);
+            }
+
+            if (_mousePattern == MouseActivationPattern.MiddleThenRight)
+            {
+                return BeginPendingPress(code, wParam, lParam, mouse, MouseActivationButton.Middle);
+            }
+
+            return CallNextHookSafely(code, wParam, lParam);
+        }
+
+        if (message == WmRButtonDown && _mousePattern == MouseActivationPattern.RightThenLeft)
+        {
+            return BeginPendingPress(code, wParam, lParam, mouse, MouseActivationButton.Right);
+        }
+
+        if (message == WmXButtonDown)
+        {
+            int buttonId = GetXButtonId(mouse.MouseData);
+            bool selected = (_mousePattern == MouseActivationPattern.XButton1 && buttonId == 1)
+                || (_mousePattern == MouseActivationPattern.XButton2 && buttonId == 2);
+            MouseActivationButton activationButton = buttonId == 1
+                ? MouseActivationButton.XButton1
+                : MouseActivationButton.XButton2;
+            if (selected
+                && !AreOtherMouseButtonsDownExcept(activationButton)
+                && CanSafelyInterceptAt(mouse.Point))
+            {
+                _swallowXButtonUp = buttonId;
+                QueueUiAction(_toggle);
+                return new IntPtr(1);
+            }
+        }
+
+        return CallNextHookSafely(code, wParam, lParam);
+    }
+
+    private IntPtr BeginPendingPress(
+        int code,
+        IntPtr wParam,
+        IntPtr lParam,
+        MSLLHOOKSTRUCT mouse,
+        MouseActivationButton button)
+    {
+        if (AreOtherMouseButtonsDownExcept(button) || !CanSafelyInterceptAt(mouse.Point))
+        {
+            return CallNextHookSafely(code, wParam, lParam);
+        }
+
+        return _mouseActivationState.TryBegin(button, mouse.Point.X, mouse.Point.Y)
+            ? new IntPtr(1)
+            : CallNextHookSafely(code, wParam, lParam);
+    }
+
+    private IntPtr HandlePhysicalButtonUp(
+        int code,
+        IntPtr wParam,
+        IntPtr lParam,
+        int message,
+        MSLLHOOKSTRUCT mouse)
+    {
+        if (!_mouseActivationState.IsPending
+            || _mouseActivationState.Button != GetActivationButton(message, mouse.MouseData))
+        {
+            return CallNextHookSafely(code, wParam, lParam);
+        }
+
+        MouseActivationButton button = _mouseActivationState.Button;
+        MouseActivationReleaseAction action = _mouseActivationState.Release();
+        if (action == MouseActivationReleaseAction.ReplayClick)
+        {
+            return ReplayPendingClick(code, wParam, lParam, mouse.Point, button);
+        }
+
+        return CallNextHookSafely(code, wParam, lParam);
+    }
+
+    private IntPtr ReplayPendingClick(
+        int code,
+        IntPtr wParam,
+        IntPtr lParam,
+        POINT point,
+        MouseActivationButton button)
+    {
+        if (!CanSafelyInjectAt(point))
+        {
+            QueueWarning("通常のクリックを復元できません。対象ウィンドウの権限を確認できないため、入力を注入しませんでした。");
+            return new IntPtr(1);
+        }
+
+        INPUT[] inputs =
+        {
+            CreateMouseInput(GetMouseButtonFlag(button, isDown: true)),
+            CreateMouseInput(GetMouseButtonFlag(button, isDown: false))
+        };
+        uint sent = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
+        if (sent == inputs.Length)
+        {
+            return new IntPtr(1);
+        }
+
+        QueueWarning($"通常のクリックを一部復元できませんでした (送信数: {sent}, Win32: {Marshal.GetLastWin32Error()})。");
+        // Downが挿入済みなら物理Upで閉じ、DownがなければUpも抑止します。
+        return sent > 0
+            ? CallNextHookSafely(code, wParam, lParam)
+            : new IntPtr(1);
+    }
+
+    private bool RestorePendingButtonDown()
+    {
+        if (!_mouseActivationState.IsPending)
         {
             return true;
         }
 
+        MouseActivationButton button = _mouseActivationState.Button;
+        _mouseActivationState.Cancel();
         if (!GetCursorPos(out POINT currentPoint) || !CanSafelyInjectAt(currentPoint))
         {
-            _rightMouseGestureState.Cancel();
-            QueueWarning("保留中の右ボタンDownを復元できません。対象ウィンドウの権限を確認できないため、入力を注入しませんでした。");
+            QueueWarning("保留中のボタンDownを復元できません。対象ウィンドウの権限を確認できないため、入力を注入しませんでした。");
             return false;
         }
 
-        _rightMouseGestureState.Cancel();
-        uint sent = SendRightButtonDown();
-        if (sent == 1)
+        if (SendMouseButtonDown(button))
         {
             return true;
         }
 
-        QueueWarning(
-            $"保留中の右ボタンDownを復元できませんでした (送信数: {sent}, Win32: {Marshal.GetLastWin32Error()})。"
-            + "Windowsの入力制限などによりSendInputが拒否された可能性があります。");
+        QueueWarning($"保留中のボタンDownを復元できませんでした (Win32: {Marshal.GetLastWin32Error()})。");
         return false;
     }
 
-    private uint RestorePendingPressForDrag(POINT currentPoint)
+    private MouseDragRestoreResult RestorePendingPressForDrag(POINT currentPoint, MouseActivationButton button)
     {
-        int startX = _rightMouseGestureState.StartX;
-        int startY = _rightMouseGestureState.StartY;
-        if (!CanSafelyInjectAt(currentPoint)
-            || !TryCreateAbsoluteMouseMove(new POINT { X = startX, Y = startY }, out INPUT startMove)
+        POINT startPoint = new() { X = _mouseActivationState.StartX, Y = _mouseActivationState.StartY };
+        if (!CanSafelyInjectAt(startPoint)
+            || !CanSafelyInjectAt(currentPoint)
+            || !TryCreateAbsoluteMouseMove(startPoint, out INPUT startMove)
             || !TryCreateAbsoluteMouseMove(currentPoint, out INPUT endMove))
         {
-            QueueWarning("右ドラッグを復元できません。対象ウィンドウまたは座標を安全に確認できませんでした。");
-            return 0;
+            QueueWarning("マウスドラッグを復元できません。対象ウィンドウまたは座標を安全に確認できませんでした。");
+            return default;
         }
 
         INPUT[] inputs =
         {
             startMove,
-            CreateMouseInput(MouseEventRightDown),
+            CreateMouseInput(GetMouseButtonFlag(button, isDown: true)),
             endMove
         };
         uint sent = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
-        if (sent != inputs.Length)
-        {
-            int error = Marshal.GetLastWin32Error();
-            QueueWarning($"右ドラッグの復元が一部失敗しました (送信数: {sent}, Win32: {error})。");
-        }
-
-        return sent;
-    }
-
-    private static uint SendRightButtonDown()
-    {
-        INPUT[] inputs = { CreateMouseInput(MouseEventRightDown) };
-        return SendInput(1, inputs, Marshal.SizeOf<INPUT>());
-    }
-
-    private uint SendRightButtonUp()
-    {
-        INPUT[] inputs = { CreateMouseInput(MouseEventRightUp) };
-        uint sent = SendInput(1, inputs, Marshal.SizeOf<INPUT>());
-        if (sent != 1)
-        {
-            int error = Marshal.GetLastWin32Error();
-            // UIPIによる拒否は戻り値とGetLastErrorだけでは特定できません。
-            // 呼び出し元は物理Upを最後の回復手段に使います。
-            QueueWarning($"復元した右ボタンDownのUpを送信できませんでした (Win32: {error})。");
-        }
-
-        return sent;
-    }
-
-    private RightPressReplayResult ReplayUnrecognizedRightPress(POINT startPoint, POINT endPoint)
-    {
-        bool hasMovement = startPoint.X != endPoint.X || startPoint.Y != endPoint.Y;
-        if (!hasMovement)
-        {
-            return ReplaySimpleRightClick();
-        }
-
-        if (!TryCreateAbsoluteMouseMove(startPoint, out INPUT startMove)
-            || !TryCreateAbsoluteMouseMove(endPoint, out INPUT endMove))
-        {
-            QueueWarning("通常の右ドラッグを復元できません。画面座標を再生できませんでした。");
-            return ReplaySimpleRightClick();
-        }
-
-        INPUT[] inputs =
-        {
-            startMove,
-            CreateMouseInput(MouseEventRightDown),
-            endMove,
-            CreateMouseInput(MouseEventRightUp)
-        };
-        uint sent = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
-        if (sent != inputs.Length)
-        {
-            int error = Marshal.GetLastWin32Error();
-            QueueWarning($"通常の右ドラッグを一部復元できませんでした (送信数: {sent}, Win32: {error})。");
-        }
-
         if (sent == inputs.Length)
         {
-            return RightPressReplayResult.ConsumePhysicalUp;
-        }
-
-        if (sent == 3)
-        {
-            // Downと終点Moveが挿入済みなので、Upを別キューへ追加して物理Upとの競合を避けます。
-            return SendRightButtonUp() == 1
-                ? RightPressReplayResult.ConsumePhysicalUp
-                : RightPressReplayResult.PassPhysicalUp;
-        }
-
-        if (sent == 2)
-        {
-            INPUT[] finish = { endMove, CreateMouseInput(MouseEventRightUp) };
-            uint finishSent = SendInput((uint)finish.Length, finish, Marshal.SizeOf<INPUT>());
-            if (finishSent == finish.Length)
-            {
-                return RightPressReplayResult.ConsumePhysicalUp;
-            }
-
-            if (finishSent == 1)
-            {
-                return SendRightButtonUp() == 1
-                    ? RightPressReplayResult.ConsumePhysicalUp
-                    : RightPressReplayResult.PassPhysicalUp;
-            }
-
-            // 最初の2件でDownはすでに挿入済みです。物理Upでボタンを閉じます。
-            return RightPressReplayResult.PassPhysicalUp;
-        }
-
-        if (sent == 1)
-        {
-            // Downは未挿入です。終点へ戻してから通常クリックを再生します。
-            uint restored = SendInput(1, new[] { endMove }, Marshal.SizeOf<INPUT>());
-            if (restored != 1)
-            {
-                QueueWarning($"マウスカーソル位置の復元に失敗しました (Win32: {Marshal.GetLastWin32Error()})。");
-            }
-        }
-
-        return ReplaySimpleRightClick();
-    }
-
-    private RightPressReplayResult ReplaySimpleRightClick()
-    {
-        INPUT[] inputs =
-        {
-            CreateMouseInput(MouseEventRightDown),
-            CreateMouseInput(MouseEventRightUp)
-        };
-        uint sent = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
-        if (sent == inputs.Length)
-        {
-            return RightPressReplayResult.ConsumePhysicalUp;
+            return new MouseDragRestoreResult(ButtonDownInserted: true, CurrentMoveInserted: true);
         }
 
         int error = Marshal.GetLastWin32Error();
-        QueueWarning($"通常の右クリックを復元できませんでした (送信数: {sent}, Win32: {error})。");
-        if (sent == 1)
+        if (sent == 2)
         {
-            return SendRightButtonUp() == 1
-                ? RightPressReplayResult.ConsumePhysicalUp
-                : RightPressReplayResult.PassPhysicalUp;
+            uint endSent = SendInput(1, new[] { endMove }, Marshal.SizeOf<INPUT>());
+            if (endSent == 1)
+            {
+                QueueWarning($"マウスドラッグ終点を別送信で復元しました (Win32: {error})。");
+                return new MouseDragRestoreResult(ButtonDownInserted: true, CurrentMoveInserted: true);
+            }
+
+            QueueWarning($"マウスドラッグ終点を物理移動へ引き継ぎます (送信数: {sent}, Win32: {Marshal.GetLastWin32Error()})。");
+            return new MouseDragRestoreResult(ButtonDownInserted: true, CurrentMoveInserted: false);
         }
 
-        // Downが挿入されていないので、保留していた物理Upは流しません。
-        return RightPressReplayResult.ConsumePhysicalUp;
+        if (sent == 1)
+        {
+            uint restored = SendInput(1, new[] { endMove }, Marshal.SizeOf<INPUT>());
+            if (restored == 1)
+            {
+                QueueWarning($"マウスドラッグDownの挿入前に中断したため、終点カーソルを復元しました (Win32: {error})。");
+                return new MouseDragRestoreResult(ButtonDownInserted: false, CurrentMoveInserted: true);
+            }
+        }
+
+        QueueWarning($"マウスドラッグを復元できませんでした (送信数: {sent}, Win32: {Marshal.GetLastWin32Error()})。");
+        return default;
     }
+
+    private bool SendMouseButtonDown(MouseActivationButton button)
+    {
+        INPUT[] inputs = { CreateMouseInput(GetMouseButtonFlag(button, isDown: true)) };
+        return SendInput(1, inputs, Marshal.SizeOf<INPUT>()) == 1;
+    }
+
+    private void SetSuppressedUp(MouseActivationButton button)
+    {
+        switch (button)
+        {
+            case MouseActivationButton.Middle:
+                _swallowMiddleUp = true;
+                break;
+            case MouseActivationButton.Right:
+                _swallowRightUp = true;
+                break;
+            case MouseActivationButton.Left:
+                _swallowLeftUp = true;
+                break;
+            case MouseActivationButton.XButton1:
+                _swallowXButtonUp = 1;
+                break;
+            case MouseActivationButton.XButton2:
+                _swallowXButtonUp = 2;
+                break;
+        }
+    }
+
+    private bool TryConsumeSuppressedUp(int message, uint mouseData)
+    {
+        bool consumed = message switch
+        {
+            WmMButtonUp when _swallowMiddleUp => ClearMiddleUp(),
+            WmRButtonUp when _swallowRightUp => ClearRightUp(),
+            WmLButtonUp when _swallowLeftUp => ClearLeftUp(),
+            WmXButtonUp when _swallowXButtonUp != 0 && GetXButtonId(mouseData) == _swallowXButtonUp
+                => ClearXButtonUp(),
+            _ => false
+        };
+        return consumed;
+    }
+
+    private bool ClearMiddleUp() { _swallowMiddleUp = false; return true; }
+    private bool ClearRightUp() { _swallowRightUp = false; return true; }
+    private bool ClearLeftUp() { _swallowLeftUp = false; return true; }
+    private bool ClearXButtonUp() { _swallowXButtonUp = 0; return true; }
+
+    private bool IsMouseEventRelevant(int message)
+    {
+        if (_disposed)
+        {
+            return _mouseHook != IntPtr.Zero;
+        }
+
+        if (message == WmMouseMove)
+        {
+            return _mouseActivationState.IsPending;
+        }
+
+        if (_mouseActivationState.IsPending && IsButtonDownMessage(message))
+        {
+            return true;
+        }
+
+        return message switch
+        {
+            WmMButtonDown => _mousePattern is MouseActivationPattern.MiddleClick or MouseActivationPattern.MiddleThenRight,
+            WmMButtonUp => _swallowMiddleUp || (_mouseActivationState.IsPending && _mouseActivationState.Button == MouseActivationButton.Middle),
+            WmRButtonDown => _mousePattern == MouseActivationPattern.RightThenLeft
+                || (_mousePattern == MouseActivationPattern.MiddleThenRight
+                    && _mouseActivationState.IsPending
+                    && _mouseActivationState.Button == MouseActivationButton.Middle),
+            WmRButtonUp => _swallowRightUp || (_mouseActivationState.IsPending && _mouseActivationState.Button == MouseActivationButton.Right),
+            WmLButtonDown => _mousePattern == MouseActivationPattern.RightThenLeft && _mouseActivationState.IsPending,
+            WmLButtonUp => _swallowLeftUp,
+            WmXButtonDown => _mousePattern is MouseActivationPattern.XButton1 or MouseActivationPattern.XButton2,
+            WmXButtonUp => _swallowXButtonUp != 0,
+            _ => false
+        };
+    }
+
+    private bool HasSuppressedButtonUps => _swallowMiddleUp || _swallowRightUp || _swallowLeftUp || _swallowXButtonUp != 0;
+    private bool ShouldKeepMouseHook => _mousePattern != MouseActivationPattern.None || _mouseActivationState.IsPending || HasSuppressedButtonUps;
+
+    private static bool IsButtonDownMessage(int message) =>
+        message is WmLButtonDown or WmRButtonDown or WmMButtonDown or WmXButtonDown;
+
+    private static bool IsButtonUpMessage(int message) =>
+        message is WmLButtonUp or WmRButtonUp or WmMButtonUp or WmXButtonUp;
+
+    private static int GetXButtonId(uint mouseData) => (int)((mouseData >> 16) & 0xFFFF);
+
+    private static MouseActivationButton GetActivationButton(int message, uint mouseData) => message switch
+    {
+        WmMButtonDown or WmMButtonUp => MouseActivationButton.Middle,
+        WmRButtonDown or WmRButtonUp => MouseActivationButton.Right,
+        WmLButtonDown or WmLButtonUp => MouseActivationButton.Left,
+        WmXButtonDown or WmXButtonUp => GetXButtonId(mouseData) == 1
+            ? MouseActivationButton.XButton1
+            : MouseActivationButton.XButton2,
+        _ => default
+    };
+
+    private static uint GetMouseButtonFlag(MouseActivationButton button, bool isDown) => (button, isDown) switch
+    {
+        (MouseActivationButton.Middle, true) => MouseEventMiddleDown,
+        (MouseActivationButton.Middle, false) => MouseEventMiddleUp,
+        (MouseActivationButton.Right, true) => MouseEventRightDown,
+        (MouseActivationButton.Right, false) => MouseEventRightUp,
+        (MouseActivationButton.Left, true) => MouseEventLeftDown,
+        (MouseActivationButton.Left, false) => MouseEventLeftUp,
+        _ => 0
+    };
 
     private static INPUT CreateMouseInput(uint flags, int dx = 0, int dy = 0)
     {
@@ -856,20 +965,67 @@ public sealed class DesktopIntegration : IDisposable
         return (mouse.Flags & (LlMouseFlagInjected | LlMouseFlagLowerIlInjected)) != 0;
     }
 
-    private void RecordForwardedRightButtonEvent(int message)
+    private static bool AreOtherMouseButtonsDownExcept(params MouseActivationButton[] ignoredButtons)
     {
-        if (message == WmRButtonDown)
+        ReadOnlySpan<(MouseActivationButton Button, uint VirtualKey)> buttons =
+        [
+            (MouseActivationButton.Left, VkLeftButton),
+            (MouseActivationButton.Right, VkRightButton),
+            (MouseActivationButton.Middle, VkMiddleButton),
+            (MouseActivationButton.XButton1, VkXButton1),
+            (MouseActivationButton.XButton2, VkXButton2)
+        ];
+
+        foreach ((MouseActivationButton button, uint virtualKey) in buttons)
         {
-            if (_forwardedRightDownCount < int.MaxValue)
+            bool ignored = false;
+            foreach (MouseActivationButton ignoredButton in ignoredButtons)
             {
-                _forwardedRightDownCount++;
+                if (button == ignoredButton)
+                {
+                    ignored = true;
+                    break;
+                }
+            }
+
+            if (!ignored && (GetAsyncKeyState(virtualKey) & unchecked((short)0x8000)) != 0)
+            {
+                return true;
             }
         }
-        else if (message == WmRButtonUp && _forwardedRightDownCount > 0)
+
+        return false;
+    }
+
+    private static bool AreOtherMouseButtonsDownExcept(MouseActivationButton first, MouseActivationButton second)
+    {
+        return AreOtherMouseButtonsDownExcept(new[] { first, second });
+    }
+
+    private static bool AreOtherMouseButtonsDownExcept(MouseActivationButton button)
+    {
+        return AreOtherMouseButtonsDownExcept(new[] { button });
+    }
+
+    private void TryFinishDisposedMouseHook()
+    {
+        if (!_disposed || HasSuppressedButtonUps || _mouseHook == IntPtr.Zero)
         {
-            _forwardedRightDownCount--;
+            return;
+        }
+
+        if (UnhookWindowsHookEx(_mouseHook))
+        {
+            _mouseHook = IntPtr.Zero;
+            ActiveMouseHookCallbacks.Remove(_mouseHookProc);
+        }
+        else
+        {
+            RaiseWarning($"終了後のマウスフック解除に失敗しました (Win32: {Marshal.GetLastWin32Error()})。");
         }
     }
+
+    private readonly record struct MouseDragRestoreResult(bool ButtonDownInserted, bool CurrentMoveInserted);
 
     private bool CanSafelyInterceptAt(POINT point)
     {
@@ -931,7 +1087,7 @@ public sealed class DesktopIntegration : IDisposable
 
     private void UnhookMouseHookIfUnused()
     {
-        if (_mouseChordEnabled || _gestureEnabled || _swallowPhysicalRightUp || _mouseHook == IntPtr.Zero)
+        if (ShouldKeepMouseHook || _mouseHook == IntPtr.Zero)
         {
             return;
         }
@@ -939,6 +1095,7 @@ public sealed class DesktopIntegration : IDisposable
         if (UnhookWindowsHookEx(_mouseHook))
         {
             _mouseHook = IntPtr.Zero;
+            ActiveMouseHookCallbacks.Remove(_mouseHookProc);
         }
         else
         {
@@ -1028,12 +1185,6 @@ public sealed class DesktopIntegration : IDisposable
     }
 
     private delegate IntPtr LowLevelMouseProc(int code, IntPtr wParam, IntPtr lParam);
-
-    private enum RightPressReplayResult
-    {
-        ConsumePhysicalUp,
-        PassPhysicalUp
-    }
 
     [StructLayout(LayoutKind.Sequential)]
     private struct POINT
@@ -1158,9 +1309,6 @@ public sealed class DesktopIntegration : IDisposable
 
     [DllImport("advapi32.dll")]
     private static extern IntPtr GetSidSubAuthority(IntPtr sid, uint subAuthorityIndex);
-
-    [DllImport("kernel32.dll")]
-    private static extern ulong GetTickCount64();
 
     private static bool TryGetProcessIntegrityLevel(uint processId, out uint integrityLevel)
     {

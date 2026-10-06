@@ -11,6 +11,16 @@ public enum LinkKind
     Folder
 }
 
+public enum MouseActivationPattern
+{
+    None,
+    MiddleClick,
+    MiddleThenRight,
+    RightThenLeft,
+    XButton1,
+    XButton2
+}
+
 public sealed class LinkItem
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
@@ -35,8 +45,7 @@ public sealed class Category
 public sealed class LauncherSettings
 {
     public string Hotkey { get; set; } = "Ctrl + Alt + Space";
-    public bool MouseChordEnabled { get; set; }
-    public bool GestureEnabled { get; set; } = true;
+    public MouseActivationPattern MousePattern { get; set; } = MouseActivationPattern.MiddleThenRight;
     public bool HideAfterLaunch { get; set; } = true;
     public bool DismissOnDeactivate { get; set; } = true;
 }

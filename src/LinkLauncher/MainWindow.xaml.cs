@@ -20,15 +20,35 @@ using Microsoft.Win32;
 
 namespace LinkLauncher;
 
-public sealed class CategoryNode
+public sealed class CategoryNode : INotifyPropertyChanged
 {
+    private bool _isSelected;
+    private bool _isExpanded;
+
     public string Id { get; init; } = "";
     public string Name { get; init; } = "";
     public string Path { get; init; } = "";
     public int Count { get; init; }
-    public bool IsSelected { get; set; }
-    public bool IsExpanded { get; set; }
+    public bool IsSelected
+    {
+        get => _isSelected;
+        set => SetState(ref _isSelected, value, nameof(IsSelected));
+    }
+    public bool IsExpanded
+    {
+        get => _isExpanded;
+        set => SetState(ref _isExpanded, value, nameof(IsExpanded));
+    }
     public List<CategoryNode> Children { get; init; } = new();
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    private void SetState(ref bool field, bool value, string propertyName)
+    {
+        if (field == value) return;
+        field = value;
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+    }
 }
 
 public sealed class LinkRow
@@ -93,7 +113,7 @@ public partial class MainWindow : Window
         Closed += (_, _) => ThemeManager.ThemeChanged -= OnThemeChanged;
         SourceInitialized += (_, _) =>
         {
-            _desktop.Configure(_library.Settings.Hotkey, _library.Settings.MouseChordEnabled, _library.Settings.GestureEnabled);
+            _desktop.Configure(_library.Settings.Hotkey, _library.Settings.MousePattern);
             UpdateHints();
             HwndSource.FromHwnd(new WindowInteropHelper(this).Handle)?.AddHook(ThemeMessage);
         };
@@ -180,6 +200,7 @@ public partial class MainWindow : Window
         if (!_ready) return;
         if (_categoryId != null && !_library.Categories.Any(c => c.Id == _categoryId)) { _categoryId = null; _view = "all"; }
         if (rebuildTree) RebuildTree();
+        SyncCategorySelection();
         bool searching = !string.IsNullOrWhiteSpace(SearchBox.Text);
         IEnumerable<LinkItem> scope = _library.Links;
         if (!searching)
@@ -231,6 +252,7 @@ public partial class MainWindow : Window
         _rebuildingTree = true;
         try
         {
+            string? selectedCategoryId = _view == "all" ? _categoryId : null;
             var expanded = new Dictionary<string, bool>();
             void Remember(IEnumerable<CategoryNode> nodes)
             {
@@ -238,7 +260,7 @@ public partial class MainWindow : Window
             }
             if (CategoryTree.ItemsSource is IEnumerable<CategoryNode> previous) Remember(previous);
             var ancestors = new HashSet<string>();
-            var selected = _library.Categories.FirstOrDefault(c => c.Id == _categoryId);
+            var selected = _library.Categories.FirstOrDefault(c => c.Id == selectedCategoryId);
             while (selected?.ParentId is string parentId && ancestors.Add(parentId))
                 selected = _library.Categories.FirstOrDefault(c => c.Id == parentId);
             var counts = _library.Links.GroupBy(l => l.CategoryId).ToDictionary(g => g.Key, g => g.Count());
@@ -247,13 +269,33 @@ public partial class MainWindow : Window
             CategoryNode Build(Category c)
             {
                 var nodes = children.TryGetValue(c.Id, out var list) ? list.Select(Build).ToList() : new List<CategoryNode>();
-                return new CategoryNode { Id = c.Id, Name = c.Name, Path = paths.GetValueOrDefault(c.Id, ""), IsSelected = c.Id == _categoryId,
+                return new CategoryNode { Id = c.Id, Name = c.Name, Path = paths.GetValueOrDefault(c.Id, ""), IsSelected = c.Id == selectedCategoryId,
                     IsExpanded = ancestors.Contains(c.Id) || expanded.GetValueOrDefault(c.Id, c.ParentId == null),
                     Children = nodes, Count = counts.GetValueOrDefault(c.Id) + nodes.Sum(n => n.Count) };
             }
             CategoryTree.ItemsSource = children.TryGetValue("", out var roots) ? roots.Select(Build).ToList() : new List<CategoryNode>();
         }
         finally { _rebuildingTree = false; }
+    }
+
+    private void SyncCategorySelection()
+    {
+        bool wasRebuildingTree = _rebuildingTree;
+        _rebuildingTree = true;
+        try
+        {
+            string? selectedCategoryId = _view == "all" ? _categoryId : null;
+            void Sync(IEnumerable<CategoryNode> nodes)
+            {
+                foreach (var node in nodes)
+                {
+                    node.IsSelected = node.Id == selectedCategoryId;
+                    Sync(node.Children);
+                }
+            }
+            if (CategoryTree.ItemsSource is IEnumerable<CategoryNode> roots) Sync(roots);
+        }
+        finally { _rebuildingTree = wasRebuildingTree; }
     }
 
     private static void SetNavState(Button button, bool active)
@@ -265,10 +307,10 @@ public partial class MainWindow : Window
     private void UpdateHints()
     {
         string hotkey = string.IsNullOrEmpty(_desktop.HotkeyLabel) ? "ショートカット未登録" : _desktop.HotkeyLabel;
-        ActivationHint.Text = hotkey + (_library.Settings.GestureEnabled ? "  ·  右↑" : "");
+        var mouse = MouseActivationChoice.For(_library.Settings.MousePattern);
+        ActivationHint.Text = hotkey + (mouse.Hint.Length > 0 ? "  ·  " + mouse.Hint : "");
         ActivationHint.ToolTip = hotkey + " で呼び出し" +
-            (_library.Settings.GestureEnabled ? "\n右ボタンを押して上へ70px動かし、1.4秒以内に離す" : "") +
-            (_library.Settings.MouseChordEnabled ? "\nCtrl + 右クリックで呼び出し" : "") + "\n↑↓ 選択 / Enter 開く / Esc 閉じる";
+            (mouse.Hint.Length > 0 ? "\n" + mouse.Label + "で呼び出し" : "") + "\n↑↓ 選択 / Enter 開く / Esc 閉じる";
     }
 
     private void ShowNotice(string message, bool error = false)
@@ -302,7 +344,7 @@ public partial class MainWindow : Window
         var result = dialog.Result;
         if (ApplyChange(l => { l.Categories.RemoveAll(c => c.Id == result.Id); l.Categories.Add(result); }))
         {
-            _view = "all"; _categoryId = result.Id; SearchBox.Clear(); Refresh(); ShowNotice("「" + result.Name + "」を保存しました。");
+            _view = "all"; _categoryId = result.Id; SearchBox.Clear(); Refresh(true); ShowNotice("「" + result.Name + "」を保存しました。");
         }
     }
 
@@ -432,14 +474,18 @@ public partial class MainWindow : Window
 
     private void CategoryTree_SelectedItemChanged(object sender, RoutedPropertyChangedEventArgs<object> e)
     {
-        if (_rebuildingTree || e.NewValue is not CategoryNode node || _categoryId == node.Id) return;
+        if (_rebuildingTree || e.NewValue is not CategoryNode node || (_view == "all" && _categoryId == node.Id)) return;
         _categoryId = node.Id; _view = "all"; SearchBox.Clear(); Refresh();
     }
-    private void SelectView(string view) { _view = view; _categoryId = null; SearchBox.Clear(); Refresh(true); }
+    private void SelectView(string view) { _view = view; _categoryId = null; SearchBox.Clear(); Refresh(); }
     private void All_Click(object sender, RoutedEventArgs e) => SelectView("all");
     private void Favorites_Click(object sender, RoutedEventArgs e) => SelectView("favorite");
     private void Recent_Click(object sender, RoutedEventArgs e) => SelectView("recent");
     private void Search_TextChanged(object sender, TextChangedEventArgs e) => Refresh();
+    private void SearchFrame_MouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (FindAncestor<Button>(e.OriginalSource as DependencyObject) == null) SearchBox.Focus();
+    }
     private void ClearSearch_Click(object sender, RoutedEventArgs e) { SearchBox.Clear(); SearchBox.Focus(); }
     private void Type_Click(object sender, RoutedEventArgs e) { _type = (string)((Button)sender).Tag; Refresh(); }
     private void Categories_Click(object sender, RoutedEventArgs e)
@@ -466,9 +512,9 @@ public partial class MainWindow : Window
         dialog = new SettingsDialog(_library.Settings, _store.FilePath, next =>
         {
             var previous = _library.Settings;
-            if (!_desktop.Configure(next.Hotkey, next.MouseChordEnabled, next.GestureEnabled)) return false;
+            if (!_desktop.Configure(next.Hotkey, next.MousePattern)) return false;
             if (!ApplyChange(l => l.Settings = next, false))
-            { _desktop.Configure(previous.Hotkey, previous.MouseChordEnabled, previous.GestureEnabled); return false; }
+            { _desktop.Configure(previous.Hotkey, previous.MousePattern); return false; }
             UpdateHints(); return true;
         }, () => Import(dialog!), () => Export(dialog!)) { Owner = this };
         Modal(() => dialog.ShowDialog());

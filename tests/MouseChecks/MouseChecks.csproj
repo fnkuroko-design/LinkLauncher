@@ -1,7 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0-windows</TargetFramework><ImplicitUsings>disable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup>
  <ItemGroup>
-  <Compile Include="../MouseGestureStateChecks.cs" Link="Program.cs" />
-  <Compile Include="../../src/LinkLauncher/Services/RightMouseGestureState.cs" Link="RightMouseGestureState.cs" />
+  <Compile Include="../MouseActivationStateChecks.cs" Link="Program.cs" />
+  <Compile Include="../../src/LinkLauncher/Models/Library.cs" Link="Library.cs" />
+  <Compile Include="../../src/LinkLauncher/Services/MouseActivationState.cs" Link="MouseActivationState.cs" />
  </ItemGroup>
 </Project>

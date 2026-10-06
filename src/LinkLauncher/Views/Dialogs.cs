@@ -191,11 +191,30 @@ internal sealed class CategoryEditor : Window
     }
 }
 
+internal sealed record MouseActivationChoice(MouseActivationPattern Pattern, string Label, string Hint, string Description)
+{
+    public override string ToString() => Label;
+    public static readonly MouseActivationChoice[] Choices =
+    {
+        new(MouseActivationPattern.MiddleThenRight, "ホイールを押しながら右クリック", "ホイール＋右",
+            "ホイールボタンを押したまま、動かさずに右ボタンを押すとすぐ呼び出します。\nホイールだけで動かした場合は通常のドラッグ、離した場合は通常のクリックになります。"),
+        new(MouseActivationPattern.RightThenLeft, "右ボタンを押しながら左クリック", "右＋左",
+            "右ボタンを先に押し、動かさずに左ボタンを押すとすぐ呼び出します。\n右だけで動かした場合は通常のドラッグ、離した場合は通常のクリックになります。"),
+        new(MouseActivationPattern.MiddleClick, "ホイールクリック", "ホイールクリック",
+            "ホイールボタンを押すとすぐ呼び出します。\n他アプリのホイールクリック（リンクを別タブで開く、自動スクロール等）は使えなくなります。"),
+        new(MouseActivationPattern.XButton1, "マウスの戻るボタン", "戻るボタン",
+            "戻るボタンを押すとすぐ呼び出します。\n他アプリの「戻る」操作を置き換えます。対応するマウスが必要です。"),
+        new(MouseActivationPattern.XButton2, "マウスの進むボタン", "進むボタン",
+            "進むボタンを押すとすぐ呼び出します。\n他アプリの「進む」操作を置き換えます。対応するマウスが必要です。"),
+        new(MouseActivationPattern.None, "使わない", "", "ショートカットまたはタスクトレイから呼び出します。")
+    };
+    public static MouseActivationChoice For(MouseActivationPattern pattern) => Choices.First(c => c.Pattern == pattern);
+}
+
 internal sealed class SettingsDialog : Window
 {
     private readonly ComboBox _hotkey = new();
-    private readonly CheckBox _gesture = new() { Content = "右ドラッグ ↑ で呼び出す" };
-    private readonly CheckBox _chord = new() { Content = "Ctrl ＋ 右クリックでも呼び出す" };
+    private readonly ComboBox _mouse = new();
     private readonly CheckBox _hideAfterLaunch = new() { Content = "リンクを開いたらランチャーを閉じる" };
     private readonly CheckBox _dismiss = new() { Content = "他の画面をクリックしたら閉じる" };
     private readonly TextBlock _error = new() { Foreground = Brushes.Firebrick, TextWrapping = TextWrapping.Wrap, FontSize = 12 };
@@ -208,9 +227,13 @@ internal sealed class SettingsDialog : Window
         _error.SetResourceReference(TextBlock.ForegroundProperty, "ErrorInk");
         var panel = DialogUi.Panel(this, "設定", "呼び出し方と、リンクの保存を管理します。", 585, 720);
         DialogUi.Label(panel, "マウスで呼び出す");
-        panel.Children.Add(_gesture);
-        panel.Children.Add(DialogUi.Description("右ボタンを押し、上へ70px以上動かして1.4秒以内に離す。\n同じ操作を使うアプリとは、設定で使い分けられます。", 11, new Thickness(20, 0, 0, 5)));
-        panel.Children.Add(_chord);
+        _mouse.ItemsSource = MouseActivationChoice.Choices;
+        panel.Children.Add(_mouse);
+        var mouseDescription = DialogUi.Description("", 11, new Thickness(0, 7, 0, 5));
+        panel.Children.Add(mouseDescription);
+        _mouse.SelectionChanged += (_, _) => mouseDescription.Text = (_mouse.SelectedItem as MouseActivationChoice)?.Description ?? "";
+        _mouse.SelectedItem = MouseActivationChoice.For(settings.MousePattern);
+        panel.Children.Add(DialogUi.Description("普段使うアプリと重ならない操作を選んでください。組み合わせは先に押すボタンの順序が決まっています。", 11, new Thickness(0, 0, 0, 5)));
         DialogUi.Label(panel, "ショートカット"); _hotkey.ItemsSource = DesktopIntegration.SupportedHotkeys;
         _hotkey.SelectedItem = settings.Hotkey; panel.Children.Add(_hotkey);
         DialogUi.Label(panel, "画面の動作"); panel.Children.Add(_hideAfterLaunch); panel.Children.Add(_dismiss);
@@ -226,7 +249,6 @@ internal sealed class SettingsDialog : Window
         panel.Children.Add(DialogUi.Description("LinkLauncher " + AppInfo.Version + "  •  MIT License  •  .NET 10", 11, new Thickness(0, 17, 0, 7)));
         panel.Children.Add(_error);
         DialogUi.Buttons(this, panel, Save);
-        _gesture.IsChecked = settings.GestureEnabled; _chord.IsChecked = settings.MouseChordEnabled;
         _hideAfterLaunch.IsChecked = settings.HideAfterLaunch; _dismiss.IsChecked = settings.DismissOnDeactivate;
     }
 
@@ -235,7 +257,7 @@ internal sealed class SettingsDialog : Window
         var settings = new LauncherSettings
         {
             Hotkey = _hotkey.SelectedItem as string ?? "Ctrl + Alt + Space",
-            GestureEnabled = _gesture.IsChecked == true, MouseChordEnabled = _chord.IsChecked == true,
+            MousePattern = (_mouse.SelectedItem as MouseActivationChoice)?.Pattern ?? MouseActivationPattern.None,
             HideAfterLaunch = _hideAfterLaunch.IsChecked == true, DismissOnDeactivate = _dismiss.IsChecked == true
         };
         if (_apply(settings)) DialogResult = true;

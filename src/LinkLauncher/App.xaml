@@ -114,6 +114,7 @@
 
         <Style TargetType="TextBox">
             <Setter Property="Foreground" Value="{DynamicResource Ink}" />
+            <Setter Property="CaretBrush" Value="{DynamicResource Ink}" />
             <Setter Property="Padding" Value="10,9" />
             <Setter Property="Background" Value="{DynamicResource Surface}" />
             <Setter Property="BorderBrush" Value="{DynamicResource Border}" />
