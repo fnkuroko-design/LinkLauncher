@@ -67,9 +67,23 @@ try
     });
     Check("絶対パス・URLの正規化とシェルコマンドの拒否", () =>
     {
-        Require(LibraryStore.NormalizeTarget("\"C:\\資料\\配線図.pdf\"") == @"C:\資料\配線図.pdf");
+        string path = @"C:\資料\配線図.pdf";
+        foreach (string wrapped in new[]
+        {
+            "\"" + path + "\"", "'" + path + "'", "“" + path + "”", "”" + path + "”",
+            "‘" + path + "’", "’" + path + "’", "＂" + path + "＂", "<" + path + ">", "＜" + path + "＞",
+            "“'<" + path + ">'”"
+        })
+        {
+            Require(LibraryStore.NormalizeTarget(wrapped) == path);
+        }
+        Require(LibraryStore.NormalizeTarget("<\\\\server\\共有\\資料 A.pdf>") == @"\\server\共有\資料 A.pdf");
         Require(LibraryStore.NormalizeTarget("file:///C:/docs/spec.pdf") == @"C:\docs\spec.pdf");
         Require(LibraryStore.NormalizeTarget("https://example.com/a") == "https://example.com/a");
+        Require(LibraryStore.NormalizeTarget("“<https://example.com/a>”") == "https://example.com/a");
+        Require(LibraryStore.NormalizeTarget("https://example.com/?q=\"quoted\"") == "https://example.com/?q=%22quoted%22");
+        Reject(() => LibraryStore.NormalizeTarget("“C:\\資料\\配線図.pdf'"));
+        Reject(() => LibraryStore.NormalizeTarget("＜＞"));
         Reject(() => LibraryStore.NormalizeTarget("powershell:command"));
         Reject(() => LibraryStore.NormalizeTarget("relative.pdf"));
         Reject(() => LibraryStore.NormalizeTarget("javascript:alert(1)"));

@@ -215,12 +215,13 @@ internal sealed class SettingsDialog : Window
 {
     private readonly ComboBox _hotkey = new();
     private readonly ComboBox _mouse = new();
+    private readonly CheckBox _startup = new() { Content = "Windowsへのサインイン時に起動する" };
     private readonly CheckBox _hideAfterLaunch = new() { Content = "リンクを開いたらランチャーを閉じる" };
     private readonly CheckBox _dismiss = new() { Content = "他の画面をクリックしたら閉じる" };
     private readonly TextBlock _error = new() { Foreground = Brushes.Firebrick, TextWrapping = TextWrapping.Wrap, FontSize = 12 };
-    private readonly Func<LauncherSettings, bool> _apply;
+    private readonly Func<LauncherSettings, bool, string?> _apply;
 
-    public SettingsDialog(LauncherSettings settings, string dataPath, Func<LauncherSettings, bool> apply,
+    public SettingsDialog(LauncherSettings settings, bool startupEnabled, string dataPath, Func<LauncherSettings, bool, string?> apply,
         Action import, Action export)
     {
         _apply = apply;
@@ -236,7 +237,10 @@ internal sealed class SettingsDialog : Window
         panel.Children.Add(DialogUi.Description("普段使うアプリと重ならない操作を選んでください。組み合わせは先に押すボタンの順序が決まっています。", 11, new Thickness(0, 0, 0, 5)));
         DialogUi.Label(panel, "ショートカット"); _hotkey.ItemsSource = DesktopIntegration.SupportedHotkeys;
         _hotkey.SelectedItem = settings.Hotkey; panel.Children.Add(_hotkey);
-        DialogUi.Label(panel, "画面の動作"); panel.Children.Add(_hideAfterLaunch); panel.Children.Add(_dismiss);
+        DialogUi.Label(panel, "起動・画面の動作");
+        _startup.IsChecked = startupEnabled;
+        _startup.ToolTip = "画面を開かずタスクトレイに常駐します。このWindowsユーザーに適用します。";
+        panel.Children.Add(_startup); panel.Children.Add(_hideAfterLaunch); panel.Children.Add(_dismiss);
         panel.Children.Add(DialogUi.Description("表示モードはWindowsの「アプリのモード」に自動で合わせます。", 11, new Thickness(0, 8, 0, 3)));
         DialogUi.Label(panel, "データ");
         var actions = new StackPanel { Orientation = Orientation.Horizontal };
@@ -260,7 +264,8 @@ internal sealed class SettingsDialog : Window
             MousePattern = (_mouse.SelectedItem as MouseActivationChoice)?.Pattern ?? MouseActivationPattern.None,
             HideAfterLaunch = _hideAfterLaunch.IsChecked == true, DismissOnDeactivate = _dismiss.IsChecked == true
         };
-        if (_apply(settings)) DialogResult = true;
-        else _error.Text = "設定を変更できませんでした。呼び出しキーの競合や保存先を確認してください。";
+        string? error = _apply(settings, _startup.IsChecked == true);
+        if (error == null) DialogResult = true;
+        else _error.Text = error;
     }
 }

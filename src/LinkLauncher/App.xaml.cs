@@ -18,30 +18,34 @@ public partial class App : Application
         System.Windows.Forms.Application.SetHighDpiMode(System.Windows.Forms.HighDpiMode.PerMonitorV2);
         base.OnStartup(e);
         DispatcherUnhandledException += OnUnhandled;
+        bool startHidden = Array.IndexOf(e.Args, "--background") >= 0;
         // Session-local names avoid cross-user interference on shared Windows PCs.
         _singleInstance = new Mutex(true, "Local\\LinkLauncher.Instance", out _ownsMutex);
         _showEvent = new EventWaitHandle(false, EventResetMode.AutoReset, "Local\\LinkLauncher.Show");
         if (!_ownsMutex)
         {
-            _showEvent.Set();
+            if (!startHidden) _showEvent.Set();
             Shutdown();
             return;
         }
         try
         {
             string? directory = null;
-            bool startHidden = false;
             for (int i = 0; i < e.Args.Length; i++)
             {
                 if (e.Args[i] == "--data-dir" && i + 1 < e.Args.Length) directory = Path.GetFullPath(e.Args[++i]);
-                if (e.Args[i] == "--background") startHidden = true;
             }
             var window = new MainWindow(directory);
             MainWindow = window;
             _wait = ThreadPool.RegisterWaitForSingleObject(_showEvent,
                 (_, _) => Dispatcher.BeginInvoke(new Action(window.ShowLauncher)), null, Timeout.Infinite, false);
+            window.ShowActivated = !startHidden;
             window.Show();
-            if (startHidden) window.Hide();
+            if (startHidden)
+            {
+                window.Hide();
+                window.ShowActivated = true;
+            }
         }
         catch (Exception ex)
         {

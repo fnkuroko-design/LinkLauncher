@@ -161,12 +161,7 @@ public sealed class LibraryStore
     public static string NormalizeTarget(string target)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(target);
-        string value = target.Trim();
-
-        if (value.Length >= 2 && ((value[0] == '"' && value[^1] == '"') || (value[0] == '\'' && value[^1] == '\'')))
-        {
-            value = value[1..^1].Trim();
-        }
+        string value = StripBalancedOuterWrappers(target);
 
         value = Environment.ExpandEnvironmentVariables(value);
         if (string.IsNullOrWhiteSpace(value))
@@ -214,6 +209,36 @@ public sealed class LibraryStore
         }
 
         return NormalizeWindowsPath(value);
+    }
+
+    private static string StripBalancedOuterWrappers(string target)
+    {
+        ReadOnlySpan<char> value = target.AsSpan().Trim();
+        while (value.Length >= 2)
+        {
+            char closing = value[0] switch
+            {
+                '"' => '"',
+                '\'' => '\'',
+                '“' => '”',
+                '”' => '”', // 貼り付け元によっては閉じ引用符だけで両端が囲まれる。
+                '‘' => '’',
+                '’' => '’',
+                '＂' => '＂',
+                '<' => '>',
+                '＜' => '＞',
+                _ => '\0'
+            };
+            if (closing == '\0' || value[^1] != closing)
+            {
+                break;
+            }
+
+            // 外側の対応ペアだけを取り除き、内側のパスや URL は変更しない。
+            value = value[1..^1].Trim();
+        }
+
+        return value.ToString();
     }
 
     private static string NormalizeWindowsPath(string value)

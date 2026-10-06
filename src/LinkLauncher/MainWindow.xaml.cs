@@ -83,6 +83,7 @@ public partial class MainWindow : Window
 {
     private readonly LibraryStore _store;
     private readonly DesktopIntegration _desktop;
+    private readonly StartupRegistration _startup = new();
     private Library _library;
     private string _view = "all";
     private string? _categoryId;
@@ -510,16 +511,41 @@ public partial class MainWindow : Window
     {
         if (_modalDepth > 0) return;
         if (!IsVisible) ShowLauncher();
+        bool startupEnabled;
+        try { startupEnabled = _startup.IsEnabled; }
+        catch (Exception ex)
+        { ShowNotice("スタートアップ設定を読み込めませんでした。" + ex.Message, true); return; }
         SettingsDialog? dialog = null;
-        dialog = new SettingsDialog(_library.Settings, _store.FilePath, next =>
-        {
-            var previous = _library.Settings;
-            if (!_desktop.Configure(next.Hotkey, next.MousePattern)) return false;
-            if (!ApplyChange(l => l.Settings = next, false))
-            { _desktop.Configure(previous.Hotkey, previous.MousePattern); return false; }
-            UpdateHints(); return true;
-        }, () => Import(dialog!), () => Export(dialog!)) { Owner = this };
+        dialog = new SettingsDialog(_library.Settings, startupEnabled, _store.FilePath, ApplySettings,
+            () => Import(dialog!), () => Export(dialog!)) { Owner = this };
         Modal(() => dialog.ShowDialog());
+    }
+
+    private string? ApplySettings(LauncherSettings next, bool startupEnabled)
+    {
+        var previous = _library.Settings;
+        string? previousStartup;
+        try { previousStartup = _startup.ReadCommand(); }
+        catch (Exception ex) { return "スタートアップ設定を読み込めませんでした。" + ex.Message; }
+        if (!_desktop.Configure(next.Hotkey, next.MousePattern))
+            return "呼び出し設定を変更できませんでした。ショートカットの競合を確認してください。";
+        try { _startup.SetEnabled(startupEnabled); }
+        catch (Exception ex)
+        {
+            return "スタートアップ登録を変更できませんでした。" + ex.Message + RestoreSettings(previous, previousStartup);
+        }
+        if (!ApplyChange(l => l.Settings = next, false))
+            return "設定を保存できませんでした。保存先を確認してください。" + RestoreSettings(previous, previousStartup);
+        UpdateHints();
+        return null;
+    }
+
+    private string RestoreSettings(LauncherSettings settings, string? startupCommand)
+    {
+        bool restored = _desktop.Configure(settings.Hotkey, settings.MousePattern);
+        try { _startup.RestoreCommand(startupCommand); }
+        catch (Exception ex) { return "\n元のスタートアップ設定に戻せませんでした。" + ex.Message; }
+        return restored ? "" : "\n元の呼び出し設定に戻せませんでした。設定を確認してください。";
     }
 
     private void Import(Window owner)
