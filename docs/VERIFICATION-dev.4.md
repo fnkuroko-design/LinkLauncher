@@ -22,3 +22,15 @@
 - Computer Useは設定画面の表示だけを確認。暗色で「Windowsへのサインイン時に起動する」が現在の未登録状態に合わせてOFFで表示されることを確認し、チェック・保存は行っていない。表示確認後、見出しと説明を整理して縦幅を縮めた。
 
 Windowsからサインアウト・再起動する確認は行っていない。実際のスタートアップ設定は既定OFFのまま、ユーザーが設定画面から有効化する。
+
+## 配布
+
+- `scripts/Publish.ps1`: 最終ソースのRelease / win-x64 / framework-dependent publish成功。警告・エラーなし。
+- ZIP: `artifacts/releases/LinkLauncher-v0.1.0-dev.4-win-x64.zip`、160,105 bytes（約156.4 KiB）。展開済みフォルダは343,942 bytes（約335.9 KiB）。
+- FileVersion 0.1.0.4、ProductVersion 0.1.0-dev.4。Git SHA末尾は`58b4ea5bdd367f2067ff7a67cd58385deb8da6c2`で、ローカルタグ`v0.1.0-dev.4`のソースと一致。
+- .NET 10の共有フレームワークを使用。ランタイム本体・library.json・PDBを同梱せず、MIT LICENSE、THIRD_PARTY_NOTICES、.NETライセンス、導入HTMLを含む。
+- SHA-256記録と再計算値が一致: `198fa36e4f3c6ef4e1753605741b5b34587945f6486a151a19f700456563eca2`。
+- dev.1〜dev.3の旧フォルダを保持し、ZIPハッシュが従来の値と一致することを確認。
+- 検証専用プロセスを終了した後、配布exeを通常データで起動し、プロセス継続を確認。
+
+GitHubへの公開は行っていない。
