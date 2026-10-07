@@ -33,3 +33,13 @@
 - runtimeconfigはMicrosoft.NETCore.App / Microsoft.WindowsDesktop.App 10.0.0を参照。ランタイム本体は同梱しない。
 - ZIPの9ファイルすべてを読み取り、展開済みファイルとSHA-256で一致を確認。ランタイム・library.json・PDBを含まない。
 - 同梱: EXE、DLL、deps.json、runtimeconfig.json、README、START_HERE.html、MIT LICENSE、THIRD_PARTY_NOTICES.md、licenses/DOTNET-LICENSE.txt。
+
+## GitHub公開
+
+- [fnkuroko-design/LinkLauncher](https://github.com/fnkuroko-design/LinkLauncher) を公開リポジトリとして作成。既定ブランチはmain、GitHubのライセンス判定はMIT。
+- [v0.1.0リリース](https://github.com/fnkuroko-design/LinkLauncher/releases/tag/v0.1.0) を正式版として公開。ZIPとSHA-256ファイルを添付し、最新リリースに設定。
+- リモートのv0.1.0タグもソースコミット `190e72341bb1d297b7943555c16efa0735774996` に一致。dev.1〜dev.4タグも保持。
+- [GitHub Actions初回ビルド](https://github.com/fnkuroko-design/LinkLauncher/actions/runs/37625265098) が成功。ZIPとチェックサムの成果物を14日間保存。
+- 認証を使わず公開URLからZIPをダウンロードし、158,646 bytesおよび上記SHA-256との一致を確認。
+
+公開結果の追記はドキュメントだけのため、再ビルドは行わず `[skip ci]` を付けて記録する。公開済みの配布物・タグは変更しない。
