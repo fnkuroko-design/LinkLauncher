@@ -32,13 +32,14 @@ foreach ($path in @($finalDirectory, $finalZip, $finalHash)) {
 
 $guid = [Guid]::NewGuid().ToString('N')
 $stageDirectory = Join-Path $releaseRoot ".$releaseName.$guid.staging"
+$stageAppDirectory = Join-Path $stageDirectory 'LinkLauncher'
 $stageZip = Join-Path $releaseRoot ".$releaseName.$guid.zip"
 $stageHash = "$stageZip.sha256"
 
 try {
-    $null = New-Item -ItemType Directory -Path $stageDirectory
+    $null = New-Item -ItemType Directory -Path $stageAppDirectory -Force
     $dotnet = Get-Command dotnet -ErrorAction Stop
-    & $dotnet.Source publish $projectPath -c Release -r win-x64 --self-contained false -p:PublishSingleFile=false -p:DebugType=None -p:DebugSymbols=false -p:UseAppHost=true -o $stageDirectory
+    & $dotnet.Source publish $projectPath -c Release -r win-x64 --self-contained false -p:PublishSingleFile=false -p:DebugType=None -p:DebugSymbols=false -p:UseAppHost=true -o $stageAppDirectory
     if ($LASTEXITCODE -ne 0) {
         throw "dotnet publish が終了コード $LASTEXITCODE で失敗しました。"
     }
@@ -50,7 +51,7 @@ try {
         'LinkLauncher.runtimeconfig.json'
     )
     foreach ($name in $requiredPublishFiles) {
-        if (-not (Test-Path -LiteralPath (Join-Path $stageDirectory $name) -PathType Leaf)) {
+        if (-not (Test-Path -LiteralPath (Join-Path $stageAppDirectory $name) -PathType Leaf)) {
             throw "publish 出力に必要なファイルがありません: $name"
         }
     }
@@ -67,7 +68,7 @@ try {
         if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
             throw "配布に必要なファイルがありません: $source"
         }
-        $destination = Join-Path $stageDirectory $file.Destination
+        $destination = Join-Path $stageAppDirectory $file.Destination
         New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
         Copy-Item -LiteralPath $source -Destination $destination
     }

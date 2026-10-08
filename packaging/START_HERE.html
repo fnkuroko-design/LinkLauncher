@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>LinkLauncher v0.1.1-dev.6 の使い方</title>
+  <title>LinkLauncher v0.1.1 の使い方</title>
   <style>
     body { max-width: 760px; margin: 40px auto; padding: 0 22px; color: #24313a; font: 16px/1.8 "Yu Gothic UI", Meiryo, sans-serif; }
     h1, h2 { color: #173d54; }
@@ -14,13 +14,13 @@
 </head>
 <body>
   <main>
-    <h1>LinkLauncher v0.1.1-dev.6 を始める</h1>
+    <h1>LinkLauncher v0.1.1 を始める</h1>
     <p>ファイル・フォルダー・Webページをカテゴリごとに整理して開く、Windows用リンクランチャーです。</p>
 
     <h2>初めて使う</h2>
     <ol>
-      <li>このZIPの全ファイルをフォルダーに展開します。</li>
-      <li>展開したフォルダーにある <strong>LinkLauncher.exe</strong> を実行します。</li>
+      <li>このZIPを新しい展開先に展開します。展開先には <strong>LinkLauncher</strong> フォルダーが作られ、アプリの全ファイルはその中にまとまります。</li>
+      <li><strong>展開先/LinkLauncher/LinkLauncher.exe</strong> を実行します。</li>
     </ol>
     <p>.NET 10 Desktop Runtime（Windows x64）が見つからない場合は、標準の案内に従って<a href="https://dotnet.microsoft.com/ja-jp/download/dotnet/10.0">Microsoft公式ダウンロードページ</a>を開き、「.NET Desktop Runtime 10」のWindows x64版を導入してから、もう一度起動してください。</p>
     <p class="note">この配布ZIPに.NETランタイムは含まれず、アプリが自動でダウンロードやインストールを行うこともありません。</p>
@@ -28,8 +28,8 @@
     <h2>新しいバージョンへ更新する</h2>
     <ol>
       <li>起動中の旧版をタスクトレイのメニューから「終了」します。</li>
-      <li><a href="https://github.com/fnkuroko-design/LinkLauncher/releases/latest">正式版のリリースページ</a>から新しいZIPを取得し、全ファイルを新しいフォルダーに展開します。</li>
-      <li>新しいフォルダーの <strong>LinkLauncher.exe</strong> を実行します。</li>
+      <li><a href="https://github.com/fnkuroko-design/LinkLauncher/releases/latest">正式版のリリースページ</a>から新しいZIPを取得し、旧版のフォルダーには上書きせず、新しい展開先に展開します。</li>
+      <li><strong>新しい展開先/LinkLauncher/LinkLauncher.exe</strong> を実行します。</li>
     </ol>
     <p>登録内容とアプリ内の設定は <code>%APPDATA%\LinkLauncher\library.json</code> に保存されるため、アプリを更新しても引き継がれます。スタートアップを有効にしている場合は、新版を起動して設定を開き、「保存」を一度押すと起動先が更新されます。</p>
 

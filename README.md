@@ -1,10 +1,10 @@
 # LinkLauncher
 
-案件や資料の種類ごとに、ファイル・フォルダー・Webページを整理して開く Windows 用リンクランチャーです。初回正式版は **v0.1.0** です。
+案件や資料の種類ごとに、ファイル・フォルダー・Webページを整理して開く Windows 用リンクランチャーです。現在の正式版は **v0.1.1** です。
 
 [最新の正式版をダウンロード](https://github.com/fnkuroko-design/LinkLauncher/releases/latest)
 
-開発中の **v0.1.1-dev.6** では、呼び出し時の前面表示を補強し、リンク追加・編集ウィンドウへのファイル／フォルダのドロップ入力を追加しています。dev.5の並び替えと自動非表示の改善も含み、完成済みの旧配布物は保持しています。
+v0.1.1では、呼び出し時の前面表示と自動非表示を改善し、カテゴリ・リンクの並び替えと、リンク追加・編集ウィンドウへのファイル／フォルダのドロップ入力を追加しました。ZIPを展開すると、全ファイルが `LinkLauncher` フォルダーにまとまります。
 
 ## 主な機能
 
@@ -15,7 +15,7 @@
 - 貼り付けたパスやURLを囲む対応した引用符・山括弧は自動で取り除きます。
 - リンク追加・編集ウィンドウにも、ファイルまたはフォルダを1つドロップしてリンク先を入力できます。名前が空なら補完し、入力済みの名前は保持します。「保存」を押すまで登録内容は変わりません。
 
-## 並び替え（v0.1.1-dev.5以降）
+## 並び替え
 
 カテゴリやリンクをドラッグし、移動先の行の上半分／下半分へドロップすると、その前／後へ移動します。右クリックメニューの「上へ移動」「下へ移動」でも操作でき、変更はその場で保存されます。
 
@@ -26,7 +26,7 @@
 ## ダウンロードと起動
 
 1. [正式版のリリースページ](https://github.com/fnkuroko-design/LinkLauncher/releases/latest)から Windows x64 ZIP をダウンロードします。
-2. ZIPの全ファイルをフォルダーに展開し、その中の `LinkLauncher.exe` を実行します。
+2. ZIPを新しい展開先に展開します。展開先には `LinkLauncher` フォルダーが作られ、アプリの全ファイルはその中にまとまります。`展開先/LinkLauncher/LinkLauncher.exe` を実行します。
 3. .NET 10 Desktop Runtime（Windows x64）がない場合は、標準の案内に従い、[Microsoft公式ダウンロードページ](https://dotnet.microsoft.com/ja-jp/download/dotnet/10.0)から「.NET Desktop Runtime 10」のWindows x64版を導入して、もう一度起動してください。
 
 配布ZIPはframework-dependent形式です。.NETランタイムは同梱されず、アプリが自動でダウンロードやインストールを行うこともありません。
@@ -34,8 +34,8 @@
 ## 更新
 
 1. 起動中の旧版をタスクトレイのメニューから「終了」します。
-2. 新しいZIPの全ファイルを、新しいフォルダーに展開します。
-3. 新しいフォルダーの `LinkLauncher.exe` を起動します。
+2. 旧版のフォルダーには上書きせず、新しい展開先を用意して新しいZIPを展開します。ZIP内の `LinkLauncher` フォルダーにアプリの全ファイルがまとまります。
+3. `新しい展開先/LinkLauncher/LinkLauncher.exe` を起動します。
 
 登録内容とアプリ内の設定は `%APPDATA%\LinkLauncher\library.json` に保存されるため、アプリを新しいフォルダーから起動しても引き継がれます。旧版で「Windowsへのサインイン時に起動する」を有効にしていた場合は、新版を起動して設定を開き、「保存」を一度押してください。スタートアップの登録先が新版の場所に更新されます。
 
@@ -59,6 +59,6 @@
 
 `global.json` でSDKを固定しています。SDKを更新するときは、配布EXEに含まれる.NET apphostのバージョンとライセンス表示も確認してください。
 
-成果物は `artifacts/releases/LinkLauncher-v<Version>-win-x64/` と、同名のZIP・SHA-256ファイルです。既存の同名成果物は上書きしません。GitHub Actionsはmainへのpush、pull request、手動実行でビルドし、ZIPとSHA-256ファイルを14日間保存します。正式な配布物はGitHub Releasesで公開します（自動公開はしません）。
+展開済みアプリは `artifacts/releases/LinkLauncher-v<Version>-win-x64/LinkLauncher/` に出力します。ZIPとSHA-256ファイルは `artifacts/releases/` 直下の `LinkLauncher-v<Version>-win-x64.zip` と `LinkLauncher-v<Version>-win-x64.zip.sha256` です。ZIP内のルートには `LinkLauncher/` があり、アプリの全ファイルはその中にまとまります。既存の同名成果物は上書きしません。GitHub Actionsはmainへのpush、pull request、手動実行でビルドし、ZIPとSHA-256ファイルを14日間保存します。正式な配布物はGitHub Releasesで公開します（自動公開はしません）。
 
-[v0.1.0リリースノート](https://github.com/fnkuroko-design/LinkLauncher/blob/main/docs/RELEASE-v0.1.0.md)と[検証記録](https://github.com/fnkuroko-design/LinkLauncher/blob/main/docs/VERIFICATION-v0.1.0.md)に、配布内容と確認範囲を記載しています。
+[v0.1.1リリースノート](https://github.com/fnkuroko-design/LinkLauncher/blob/main/docs/RELEASE-v0.1.1.md)と[検証記録](https://github.com/fnkuroko-design/LinkLauncher/blob/main/docs/VERIFICATION-v0.1.1.md)に、配布内容と確認範囲を記載しています。
