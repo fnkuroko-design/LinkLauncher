@@ -27,3 +27,10 @@
 - 内容はEXE、DLL、deps/runtimeconfig JSON、README、導入HTML、MIT LICENSE、第三者通知、.NETライセンスのみ。ユーザーデータ・PDB・ランタイム本体を含まない。
 - runtimeconfigは `Microsoft.NETCore.App` と `Microsoft.WindowsDesktop.App` の10.0.0を参照する。
 - 既存の7つのZIP（dev.1〜dev.6、v0.1.0）のSHA-256が変更前の記録と一致し、完成済み成果物を保持している。
+
+## GitHub公開
+
+- 公開リポジトリのmainへ反映し、正式タグ `v0.1.1` は配布ソース `f52e3d91ba470164e61571caea8ad63bd43ae12a` を指すことをリモートで確認した。dev.5・dev.6のタグも保持・公開した。
+- [正式リリース](https://github.com/fnkuroko-design/LinkLauncher/releases/tag/v0.1.1)を最新リリースとして公開。ZIP（170,968 bytes）とSHA-256ファイル（99 bytes）の2点を添付し、draft・prereleaseはともにfalse。
+- 認証情報を付けないHTTPクライアントで公開ZIPとSHA-256ファイルをダウンロードし、ZIPのサイズ・ハッシュがローカル配布物と一致することを確認した。GitHubのasset digestも同じSHA-256だった。
+- [GitHub ActionsのWindows x64 ZIPビルド](https://github.com/fnkuroko-design/LinkLauncher/actions/runs/37771883883)が成功。対象コミットは `2dc388da87d822267d7900a64b238523eec8a190`（配布物の検証記録を含む）。
