@@ -24,3 +24,16 @@
 実マウスのフック入力と、管理者権限の画面、複数DPI環境など全条件を網羅した実機確認は行っていない。Windowsの前面化制限を解除する仕組みではなく、常時最前面を強制しない。[MicrosoftのSetForegroundWindow仕様](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setforegroundwindow)を前提にした処理である。
 
 正式版v0.1.0の公開ZIPは変更せず、本版を次の動作確認用の開発版として作成する。
+
+## 配布
+
+- `scripts/Publish.ps1` によりRelease / win-x64 / framework-dependent ZIPを作成。警告・エラーなし。
+- ZIP: `artifacts/releases/LinkLauncher-v0.1.1-dev.5-win-x64.zip`、169,474 bytes（約165.5 KiB）。展開フォルダーは366,188 bytes（約357.6 KiB）。
+- FileVersion `0.1.1.5`、ProductVersion `0.1.1-dev.5+0c8ba621b7362c1acb497ea5bcdaaa4f0767b247`。ソースコミットとローカルタグ `v0.1.1-dev.5` の対象が一致する。
+- ZIP内の9ファイルを期待リストと照合。実行用4ファイル、README、導入HTML、MIT LICENSE、THIRD_PARTY_NOTICES、.NETライセンスを同梱。ランタイム本体・ユーザーデータ・PDBを含まない。
+- runtimeconfigは `Microsoft.NETCore.App` と `Microsoft.WindowsDesktop.App` の10.0.0共有フレームワークを要求する。
+- SHA-256記録と再計算値が一致: `c56238ecacf94ed1d8bba18865ff02ffcbedb01892a77f6535fbfcee76b1b0e1`。
+- dev.1〜dev.4と正式版v0.1.0の旧ZIPは従来のハッシュと一致。
+- 検証用インスタンスを終了し、配布EXEを通常の保存先で `--background` 起動。Windowsスタートアップの登録先は変更していない。
+
+本開発版はローカル配布物として作成し、GitHubへ公開していない。
