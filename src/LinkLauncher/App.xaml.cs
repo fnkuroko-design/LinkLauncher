@@ -40,12 +40,13 @@ public partial class App : Application
             _wait = ThreadPool.RegisterWaitForSingleObject(_showEvent,
                 (_, _) => Dispatcher.BeginInvoke(new Action(window.ShowLauncher)), null, Timeout.Infinite, false);
             window.ShowActivated = !startHidden;
-            window.Show();
             if (startHidden)
             {
+                window.Show();
                 window.Hide();
                 window.ShowActivated = true;
             }
+            else window.ShowLauncher();
         }
         catch (Exception ex)
         {

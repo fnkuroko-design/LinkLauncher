@@ -25,6 +25,7 @@ public sealed class LinkItem
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
     public string CategoryId { get; set; } = string.Empty;
+    public int? Order { get; set; }
     public string Name { get; set; } = string.Empty;
     public string Target { get; set; } = string.Empty;
     public LinkKind Kind { get; set; }
@@ -39,6 +40,7 @@ public sealed class Category
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
     public string? ParentId { get; set; }
+    public int? Order { get; set; }
     public string Name { get; set; } = string.Empty;
 }
 

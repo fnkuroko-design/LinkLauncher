@@ -427,6 +427,11 @@ public sealed class LibraryStore
 
             ValidateId(category.Id, "カテゴリ");
             ValidateText(category.Name, MaxCategoryNameLength, "カテゴリ名", allowEmpty: false);
+            if (category.Order is < 0)
+            {
+                throw new InvalidDataException($"カテゴリの並び順が正しくありません: {category.Name}");
+            }
+
             if (!categories.TryAdd(category.Id, category))
             {
                 throw new InvalidDataException($"カテゴリ ID が重複しています: {category.Id}");
@@ -471,6 +476,11 @@ public sealed class LibraryStore
             if (!linkIds.Add(link.Id))
             {
                 throw new InvalidDataException($"リンク ID が重複しています: {link.Id}");
+            }
+
+            if (link.Order is < 0)
+            {
+                throw new InvalidDataException($"リンクの並び順が正しくありません: {link.Name}");
             }
 
             if (string.IsNullOrWhiteSpace(link.CategoryId) || !categories.ContainsKey(link.CategoryId))

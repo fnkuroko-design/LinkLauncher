@@ -93,9 +93,14 @@ public partial class MainWindow : Window
     private bool _exiting;
     private bool _ready;
     private bool _rebuildingTree;
-    private bool _menuOpen;
+    private readonly HashSet<ContextMenu> _openMenus = new();
+    private bool _menuOpen => _openMenus.Count > 0;
     private bool _launching;
     private bool _categoriesVisible = true;
+    private bool _showingLauncher;
+    private bool _externalDismissPending;
+    private long _visibilityGeneration;
+    private long? _queuedDismissGeneration;
     private string? _pressedLinkId;
     private Point _linkPressStart;
 
@@ -108,13 +113,19 @@ public partial class MainWindow : Window
         BuildLabel.Text = AppInfo.BuildLabel;
         ShowInTaskbar = true;
         Icon = BitmapFrameFromResource();
-        _desktop = new DesktopIntegration(this, ToggleLauncher, ShowSettings, Exit);
+        _desktop = new DesktopIntegration(this, ToggleLauncher, ShowSettings, Exit, ShowLauncher);
         _desktop.Warning += warning => ShowNotice(warning, true);
+        _desktop.ExternalButtonDown += OnExternalButtonDown;
+        IsVisibleChanged += (_, _) =>
+        {
+            _visibilityGeneration++;
+            _externalDismissPending = false;
+        };
         ThemeManager.ThemeChanged += OnThemeChanged;
         Closed += (_, _) => ThemeManager.ThemeChanged -= OnThemeChanged;
         SourceInitialized += (_, _) =>
         {
-            _desktop.Configure(_library.Settings.Hotkey, _library.Settings.MousePattern);
+            _desktop.Configure(_library.Settings.Hotkey, _library.Settings.MousePattern, _library.Settings.DismissOnDeactivate);
             UpdateHints();
             HwndSource.FromHwnd(new WindowInteropHelper(this).Handle)?.AddHook(ThemeMessage);
         };
@@ -144,34 +155,53 @@ public partial class MainWindow : Window
     public void ShowLauncher()
     {
         if (_exiting) return;
-        if (_modalDepth > 0) { Activate(); return; }
-        WindowState = WindowState.Normal;
-        Show();
-        // SetWindowPos uses physical pixels and the target monitor's work area.
-        // This also works across displays with different DPI values.
-        if (DesktopIntegration.TryGetCursor(out var cursor))
+        _visibilityGeneration++;
+        _externalDismissPending = false;
+        _showingLauncher = true;
+        try
         {
-            var screen = System.Windows.Forms.Screen.FromPoint(new System.Drawing.Point((int)cursor.X, (int)cursor.Y));
-            var area = screen.WorkingArea;
-            var hwnd = new WindowInteropHelper(this).Handle;
-            if (GetWindowRect(hwnd, out var bounds))
+            if (_modalDepth > 0)
             {
-                int width = bounds.Right - bounds.Left;
-                int height = bounds.Bottom - bounds.Top;
-                int x = Math.Clamp((int)cursor.X - 80, area.Left, Math.Max(area.Left, area.Right - width));
-                int y = Math.Clamp((int)cursor.Y - 95, area.Top, Math.Max(area.Top, area.Bottom - height));
-                SetWindowPos(hwnd, IntPtr.Zero, x, y, 0, 0, 0x0001 | 0x0004);
+                WindowActivation.TryActivate(new WindowInteropHelper(this).Handle, Topmost);
+                return;
             }
+            WindowState = WindowState.Normal;
+            Show();
+            // SetWindowPos uses physical pixels and the target monitor's work area.
+            // This also works across displays with different DPI values.
+            if (DesktopIntegration.TryGetCursor(out var cursor))
+            {
+                var screen = System.Windows.Forms.Screen.FromPoint(new System.Drawing.Point((int)cursor.X, (int)cursor.Y));
+                var area = screen.WorkingArea;
+                var hwnd = new WindowInteropHelper(this).Handle;
+                if (GetWindowRect(hwnd, out var bounds))
+                {
+                    int width = bounds.Right - bounds.Left;
+                    int height = bounds.Bottom - bounds.Top;
+                    int x = Math.Clamp((int)cursor.X - 80, area.Left, Math.Max(area.Left, area.Right - width));
+                    int y = Math.Clamp((int)cursor.Y - 95, area.Top, Math.Max(area.Top, area.Bottom - height));
+                    SetWindowPos(hwnd, IntPtr.Zero, x, y, 0, 0, 0x0001 | 0x0004);
+                }
+            }
+            Activate();
+            var handle = new WindowInteropHelper(this).Handle;
+            WindowActivation.TryActivate(handle, Topmost);
+            SearchBox.Focus();
+            SearchBox.SelectAll();
+            long generation = _visibilityGeneration;
+            Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(() =>
+            {
+                if (_exiting || !IsVisible || generation != _visibilityGeneration || _modalDepth > 0) return;
+                if (!WindowActivation.IsProcessForeground()) WindowActivation.TryActivate(handle, Topmost);
+                if (WindowActivation.IsProcessForeground()) SearchBox.Focus();
+            }));
         }
-        Activate();
-        SetForegroundWindow(new WindowInteropHelper(this).Handle);
-        SearchBox.Focus();
-        SearchBox.SelectAll();
+        finally { _showingLauncher = false; }
     }
 
     private void ToggleLauncher()
     {
-        if (_modalDepth > 0) { Activate(); return; }
+        if (_modalDepth > 0) { ShowLauncher(); return; }
         if (IsVisible && IsActive) Hide();
         else ShowLauncher();
     }
@@ -214,6 +244,7 @@ public partial class MainWindow : Window
         if (_type != "All" && Enum.TryParse<LinkKind>(_type, out var kind)) scope = scope.Where(l => l.Kind == kind);
         var results = SearchEngine.Search(_library, SearchBox.Text, scope);
         if (!searching && _view == "recent") results = results.OrderByDescending(l => l.LastOpenedUtc).ToList();
+        else if (_view != "recent") results = LibraryOrder.GetLinks(_library, results);
         var selectedId = (LinkList.SelectedItem as LinkRow)?.Item.Id;
         var paths = SearchEngine.GetCategoryPaths(_library);
         var rows = results.Select(l => new LinkRow(l, paths.GetValueOrDefault(l.CategoryId, ""))).ToList();
@@ -268,7 +299,8 @@ public partial class MainWindow : Window
                 selected = _library.Categories.FirstOrDefault(c => c.Id == parentId);
             var counts = _library.Links.GroupBy(l => l.CategoryId).ToDictionary(g => g.Key, g => g.Count());
             var paths = SearchEngine.GetCategoryPaths(_library);
-            var children = _library.Categories.GroupBy(c => c.ParentId ?? "").ToDictionary(g => g.Key, g => g.OrderBy(c => c.Name).ToList());
+            var children = _library.Categories.GroupBy(c => c.ParentId ?? "").ToDictionary(g => g.Key,
+                g => LibraryOrder.GetCategories(_library, g.Key.Length == 0 ? null : g.Key));
             CategoryNode Build(Category c)
             {
                 var nodes = children.TryGetValue(c.Id, out var list) ? list.Select(Build).ToList() : new List<CategoryNode>();
@@ -326,7 +358,7 @@ public partial class MainWindow : Window
     {
         _modalDepth++;
         try { return action(); }
-        finally { _modalDepth--; }
+        finally { _modalDepth--; RequestAutoDismiss(); }
     }
 
     private void AddLink_Click(object sender, RoutedEventArgs e) => EditLink(null);
@@ -336,7 +368,7 @@ public partial class MainWindow : Window
         var dialog = new LinkEditor(_library, _categoryId ?? _library.Categories[0].Id, item, initialTarget) { Owner = this };
         if (Modal(() => dialog.ShowDialog()) != true || dialog.Result == null) return;
         var result = dialog.Result;
-        if (ApplyChange(l => { l.Links.RemoveAll(x => x.Id == result.Id); l.Links.Add(result); })) ShowNotice("「" + result.Name + "」を保存しました。");
+        if (ApplyChange(l => LibraryOrder.UpsertLink(l, result))) ShowNotice("「" + result.Name + "」を保存しました。");
     }
 
     private void AddCategory_Click(object sender, RoutedEventArgs e) => EditCategory(null, _categoryId);
@@ -345,7 +377,7 @@ public partial class MainWindow : Window
         var dialog = new CategoryEditor(_library, parentId, category) { Owner = this };
         if (Modal(() => dialog.ShowDialog()) != true || dialog.Result == null) return;
         var result = dialog.Result;
-        if (ApplyChange(l => { l.Categories.RemoveAll(c => c.Id == result.Id); l.Categories.Add(result); }))
+        if (ApplyChange(l => LibraryOrder.UpsertCategory(l, result)))
         {
             _view = "all"; _categoryId = result.Id; SearchBox.Clear(); Refresh(true); ShowNotice("「" + result.Name + "」を保存しました。");
         }
@@ -430,17 +462,19 @@ public partial class MainWindow : Window
             item.SetResourceReference(FrameworkElement.StyleProperty, typeof(MenuItem));
             item.Click += (_, _) => action.Action(); menu.Items.Add(item);
         }
-        menu.Opened += (_, _) => _menuOpen = true;
-        menu.Closed += (_, _) => _menuOpen = false;
+        menu.Opened += (_, _) => _openMenus.Add(menu);
+        menu.Closed += (_, _) => { _openMenus.Remove(menu); RequestAutoDismiss(); };
         menu.IsOpen = true;
         return menu;
     }
 
     private void OpenLinkMenu(FrameworkElement target, LinkItem link)
     {
-        Menu(target, ("開く", () => _ = Launch(link)), ("編集・カテゴリを変更", () => EditLink(link)),
+        var menu = Menu(target, ("開く", () => _ = Launch(link)), ("編集・カテゴリを変更", () => EditLink(link)),
             ("リンク先をコピー", () => { Clipboard.SetText(link.Target); ShowNotice("リンク先をコピーしました。"); }),
             ("登録を削除", () => DeleteLink(link)));
+        AddOrderMenuItems(menu, () => MoveLinkOneStep(link.Id, -1), () => MoveLinkOneStep(link.Id, 1),
+            CanMoveLinkOneStep(link.Id, -1), CanMoveLinkOneStep(link.Id, 1));
     }
 
     private void LinkMenu_Click(object sender, RoutedEventArgs e)
@@ -459,8 +493,10 @@ public partial class MainWindow : Window
     {
         if (sender is not FrameworkElement element || element.DataContext is not CategoryNode node) return;
         var category = _library.Categories.First(c => c.Id == node.Id);
-        Menu(element, ("この中にカテゴリを追加", () => EditCategory(null, node.Id)),
+        var menu = Menu(element, ("この中にカテゴリを追加", () => EditCategory(null, node.Id)),
             ("編集・移動", () => EditCategory(category, category.ParentId)), ("カテゴリを削除", () => DeleteCategory(category)));
+        AddOrderMenuItems(menu, () => MoveCategoryOneStep(node.Id, -1), () => MoveCategoryOneStep(node.Id, 1),
+            CanMoveCategoryOneStep(node.Id, -1), CanMoveCategoryOneStep(node.Id, 1));
         e.Handled = true;
     }
 
@@ -473,6 +509,20 @@ public partial class MainWindow : Window
                 ? VisualTreeHelper.GetParent(element) : LogicalTreeHelper.GetParent(element);
         }
         return null;
+    }
+
+    private static void AddOrderMenuItems(ContextMenu menu, Action moveUp, Action moveDown, bool canMoveUp, bool canMoveDown)
+    {
+        var separator = new Separator();
+        separator.SetResourceReference(FrameworkElement.StyleProperty, typeof(Separator));
+        menu.Items.Add(separator);
+        foreach (var (label, action, enabled) in new[] { ("上へ移動", moveUp, canMoveUp), ("下へ移動", moveDown, canMoveDown) })
+        {
+            var item = new MenuItem { Header = label, IsEnabled = enabled };
+            item.SetResourceReference(FrameworkElement.StyleProperty, typeof(MenuItem));
+            item.Click += (_, _) => action();
+            menu.Items.Add(item);
+        }
     }
 
     private void CategoryTree_SelectedItemChanged(object sender, RoutedPropertyChangedEventArgs<object> e)
@@ -504,6 +554,7 @@ public partial class MainWindow : Window
     {
         _pinned = !_pinned; PinButton.Content = _pinned ? "固定中" : "固定";
         PinButton.SetResourceReference(Control.ForegroundProperty, _pinned ? "Accent" : "Muted");
+        if (!_pinned) RequestAutoDismiss();
     }
 
     private void Settings_Click(object sender, RoutedEventArgs e) => ShowSettings();
@@ -527,7 +578,7 @@ public partial class MainWindow : Window
         string? previousStartup;
         try { previousStartup = _startup.ReadCommand(); }
         catch (Exception ex) { return "スタートアップ設定を読み込めませんでした。" + ex.Message; }
-        if (!_desktop.Configure(next.Hotkey, next.MousePattern))
+        if (!_desktop.Configure(next.Hotkey, next.MousePattern, next.DismissOnDeactivate))
             return "呼び出し設定を変更できませんでした。ショートカットの競合を確認してください。";
         try { _startup.SetEnabled(startupEnabled); }
         catch (Exception ex)
@@ -542,7 +593,7 @@ public partial class MainWindow : Window
 
     private string RestoreSettings(LauncherSettings settings, string? startupCommand)
     {
-        bool restored = _desktop.Configure(settings.Hotkey, settings.MousePattern);
+        bool restored = _desktop.Configure(settings.Hotkey, settings.MousePattern, settings.DismissOnDeactivate);
         try { _startup.RestoreCommand(startupCommand); }
         catch (Exception ex) { return "\n元のスタートアップ設定に戻せませんでした。" + ex.Message; }
         return restored ? "" : "\n元の呼び出し設定に戻せませんでした。設定を確認してください。";
@@ -617,7 +668,7 @@ public partial class MainWindow : Window
 
     private async void Window_KeyDown(object sender, KeyEventArgs e)
     {
-        if (_modalDepth > 0 || _menuOpen) return;
+        if (_modalDepth > 0 || _menuOpen || IsOrderDragInProgress) return;
         if (e.Key == Key.Escape) { Hide(); e.Handled = true; return; }
         if (Keyboard.Modifiers == ModifierKeys.Control && e.Key == Key.F) { SearchBox.Focus(); SearchBox.SelectAll(); e.Handled = true; return; }
         if (Keyboard.Modifiers.HasFlag(ModifierKeys.Control) && e.Key == Key.N)
@@ -653,9 +704,30 @@ public partial class MainWindow : Window
     private void Window_Deactivated(object? sender, EventArgs e)
     {
         _pressedLinkId = null;
-        if (!_ready || _modalDepth > 0 || _pinned || _menuOpen || !_library.Settings.DismissOnDeactivate) return;
+        RequestAutoDismiss();
+    }
+
+    private void OnExternalButtonDown()
+    {
+        if (!_ready || !IsVisible || _showingLauncher || _modalDepth > 0 || _pinned || IsOrderDragInProgress ||
+            !_library.Settings.DismissOnDeactivate) return;
+        _externalDismissPending = true;
+        RequestAutoDismiss();
+    }
+
+    private void RequestAutoDismiss()
+    {
+        if (!_ready || !IsVisible || _exiting) return;
+        long generation = _visibilityGeneration;
+        if (_queuedDismissGeneration == generation) return;
+        _queuedDismissGeneration = generation;
         Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() =>
-        { if (!IsActive && _modalDepth == 0 && !_pinned && !_menuOpen) Hide(); }));
+        {
+            if (_queuedDismissGeneration == generation) _queuedDismissGeneration = null;
+            if (generation != _visibilityGeneration || !IsVisible || _exiting || _showingLauncher || _modalDepth > 0 ||
+                _pinned || _menuOpen || IsOrderDragInProgress || !_library.Settings.DismissOnDeactivate) return;
+            if (_externalDismissPending || !WindowActivation.IsProcessForeground()) Hide();
+        }));
     }
     private void Window_Closing(object? sender, CancelEventArgs e)
     {
@@ -678,5 +750,4 @@ public partial class MainWindow : Window
     [StructLayout(LayoutKind.Sequential)] private struct Rect { public int Left, Top, Right, Bottom; }
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool GetWindowRect(IntPtr hwnd, out Rect rect);
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int width, int height, uint flags);
-    [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool SetForegroundWindow(IntPtr hwnd);
 }

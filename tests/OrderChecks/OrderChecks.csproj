@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../src/LinkLauncher/Models/Library.cs" Link="Library.cs" />
+    <Compile Include="../../src/LinkLauncher/Services/LibraryOrder.cs" Link="LibraryOrder.cs" />
+    <Compile Include="../../src/LinkLauncher/Services/LibraryStore.cs" Link="LibraryStore.cs" />
+    <Compile Include="../../src/LinkLauncher/Services/SearchEngine.cs" Link="SearchEngine.cs" />
+  </ItemGroup>
+</Project>

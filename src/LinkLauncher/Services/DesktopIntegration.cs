@@ -73,9 +73,11 @@ public sealed class DesktopIntegration : IDisposable
     private static readonly HashSet<LowLevelMouseProc> ActiveMouseHookCallbacks = new();
 
     private readonly Window _window;
+    private readonly uint _processId = (uint)Environment.ProcessId;
     private readonly Action _toggle;
     private readonly Action _showSettings;
     private readonly Action _exit;
+    private readonly Action? _showLauncher;
     private readonly Forms.NotifyIcon _notifyIcon;
     private readonly Forms.ContextMenuStrip _trayMenu;
     private readonly LowLevelMouseProc _mouseHookProc;
@@ -95,18 +97,25 @@ public sealed class DesktopIntegration : IDisposable
     private bool _swallowRightUp;
     private bool _swallowLeftUp;
     private int _swallowXButtonUp;
+    private bool _dismissOnExternalClick;
     private bool _disposed;
 
     public event Action<string>? Warning;
 
+    /// <summary>
+    /// 同一プロセス外のマウスボタンDownをUIスレッドへ通知します。入力は消費しません。
+    /// </summary>
+    public event Action? ExternalButtonDown;
+
     public string HotkeyLabel => _hotkeyLabel;
 
-    public DesktopIntegration(Window window, Action toggle, Action showSettings, Action exit)
+    public DesktopIntegration(Window window, Action toggle, Action showSettings, Action exit, Action? showLauncher = null)
     {
         _window = window ?? throw new ArgumentNullException(nameof(window));
         _toggle = toggle ?? throw new ArgumentNullException(nameof(toggle));
         _showSettings = showSettings ?? throw new ArgumentNullException(nameof(showSettings));
         _exit = exit ?? throw new ArgumentNullException(nameof(exit));
+        _showLauncher = showLauncher;
         _mouseHookProc = MouseHookCallback;
         _processIntegrityLevel = TryGetProcessIntegrityLevel(GetCurrentProcess(), out uint integrityLevel)
             ? integrityLevel
@@ -169,10 +178,10 @@ public sealed class DesktopIntegration : IDisposable
     }
 
     /// <summary>
-    /// グローバルホットキーとマウス操作を設定します。ホットキー登録に失敗した場合は、
-    /// 以前の登録を維持します。
+    /// グローバルホットキー、マウス操作、および外部クリック監視を設定します。
+    /// ホットキー登録に失敗した場合は、以前の登録を維持します。
     /// </summary>
-    public bool Configure(string hotkey, MouseActivationPattern mousePattern)
+    public bool Configure(string hotkey, MouseActivationPattern mousePattern, bool dismissOnExternalClick = false)
     {
         if (_disposed)
         {
@@ -198,6 +207,7 @@ public sealed class DesktopIntegration : IDisposable
         }
 
         bool needsMouseHook = mousePattern != MouseActivationPattern.None
+            || dismissOnExternalClick
             || HasSuppressedButtonUps
             || _mouseActivationState.IsPending;
         IntPtr stagedMouseHook = IntPtr.Zero;
@@ -265,6 +275,7 @@ public sealed class DesktopIntegration : IDisposable
         }
 
         _mousePattern = mousePattern;
+        _dismissOnExternalClick = dismissOnExternalClick;
         if (_mouseHook != IntPtr.Zero && !ShouldKeepMouseHook)
         {
             if (UnhookWindowsHookEx(_mouseHook))
@@ -379,6 +390,7 @@ public sealed class DesktopIntegration : IDisposable
         }
 
         Warning = null;
+        ExternalButtonDown = null;
     }
 
     private void OnSourceInitialized(object? sender, EventArgs e)
@@ -484,7 +496,7 @@ public sealed class DesktopIntegration : IDisposable
             }
         }
 
-        if (!IsMouseEventRelevant(message))
+        if (!ShouldInspectMouseMessage(message))
         {
             return CallNextHookSafely(code, wParam, lParam);
         }
@@ -524,6 +536,15 @@ public sealed class DesktopIntegration : IDisposable
                 return CallNextHookSafely(code, wParam, lParam);
             }
 
+            if (_dismissOnExternalClick
+                && _window.IsVisible
+                && IsButtonDownMessage(message)
+                && IsOutsideProcessWindow(mouse.Point)
+                && !IsActivationGestureCandidate(message, mouse.MouseData))
+            {
+                QueueExternalButtonDown();
+            }
+
             if (message == WmMouseMove)
             {
                 if (!_mouseActivationState.ShouldRestoreOnMove(mouse.Point.X, mouse.Point.Y))
@@ -532,12 +553,15 @@ public sealed class DesktopIntegration : IDisposable
                 }
 
                 MouseActivationButton button = _mouseActivationState.Button;
+                POINT pressPoint = new() { X = _mouseActivationState.StartX, Y = _mouseActivationState.StartY };
                 MouseDragRestoreResult restore = RestorePendingPressForDrag(mouse.Point, button);
                 _mouseActivationState.Cancel();
                 if (!restore.ButtonDownInserted)
                 {
                     SetSuppressedUp(button);
                 }
+
+                QueueExternalButtonDownIfOutside(pressPoint);
 
                 return restore.CurrentMoveInserted
                     ? new IntPtr(1)
@@ -615,6 +639,8 @@ public sealed class DesktopIntegration : IDisposable
                     SetSuppressedUp(primaryButton);
                 }
 
+                QueueExternalButtonDownIfOutside(mouse.Point);
+
                 return CallNextHookSafely(code, wParam, lParam);
             }
 
@@ -638,12 +664,19 @@ public sealed class DesktopIntegration : IDisposable
                     return new IntPtr(1);
                 }
 
+                QueueExternalButtonDownIfOutside(mouse.Point);
                 return CallNextHookSafely(code, wParam, lParam);
             }
 
             if (_mousePattern == MouseActivationPattern.MiddleThenRight)
             {
-                return BeginPendingPress(code, wParam, lParam, mouse, MouseActivationButton.Middle);
+                IntPtr result = BeginPendingPress(code, wParam, lParam, mouse, MouseActivationButton.Middle);
+                if (!_mouseActivationState.IsPending)
+                {
+                    QueueExternalButtonDownIfOutside(mouse.Point);
+                }
+
+                return result;
             }
 
             return CallNextHookSafely(code, wParam, lParam);
@@ -651,7 +684,13 @@ public sealed class DesktopIntegration : IDisposable
 
         if (message == WmRButtonDown && _mousePattern == MouseActivationPattern.RightThenLeft)
         {
-            return BeginPendingPress(code, wParam, lParam, mouse, MouseActivationButton.Right);
+            IntPtr result = BeginPendingPress(code, wParam, lParam, mouse, MouseActivationButton.Right);
+            if (!_mouseActivationState.IsPending)
+            {
+                QueueExternalButtonDownIfOutside(mouse.Point);
+            }
+
+            return result;
         }
 
         if (message == WmXButtonDown)
@@ -669,6 +708,11 @@ public sealed class DesktopIntegration : IDisposable
                 _swallowXButtonUp = buttonId;
                 QueueUiAction(_toggle);
                 return new IntPtr(1);
+            }
+
+            if (selected)
+            {
+                QueueExternalButtonDownIfOutside(mouse.Point);
             }
         }
 
@@ -709,7 +753,9 @@ public sealed class DesktopIntegration : IDisposable
         MouseActivationReleaseAction action = _mouseActivationState.Release();
         if (action == MouseActivationReleaseAction.ReplayClick)
         {
-            return ReplayPendingClick(code, wParam, lParam, mouse.Point, button);
+            IntPtr result = ReplayPendingClick(code, wParam, lParam, mouse.Point, button);
+            QueueExternalButtonDownIfOutside(mouse.Point);
+            return result;
         }
 
         return CallNextHookSafely(code, wParam, lParam);
@@ -869,7 +915,7 @@ public sealed class DesktopIntegration : IDisposable
     private bool ClearLeftUp() { _swallowLeftUp = false; return true; }
     private bool ClearXButtonUp() { _swallowXButtonUp = 0; return true; }
 
-    private bool IsMouseEventRelevant(int message)
+    private bool ShouldInspectMouseMessage(int message)
     {
         if (_disposed)
         {
@@ -879,6 +925,11 @@ public sealed class DesktopIntegration : IDisposable
         if (message == WmMouseMove)
         {
             return _mouseActivationState.IsPending;
+        }
+
+        if (_dismissOnExternalClick && _window.IsVisible && IsButtonDownMessage(message))
+        {
+            return true;
         }
 
         if (_mouseActivationState.IsPending && IsButtonDownMessage(message))
@@ -904,7 +955,93 @@ public sealed class DesktopIntegration : IDisposable
     }
 
     private bool HasSuppressedButtonUps => _swallowMiddleUp || _swallowRightUp || _swallowLeftUp || _swallowXButtonUp != 0;
-    private bool ShouldKeepMouseHook => _mousePattern != MouseActivationPattern.None || _mouseActivationState.IsPending || HasSuppressedButtonUps;
+    private bool ShouldKeepMouseHook => _mousePattern != MouseActivationPattern.None
+        || _dismissOnExternalClick
+        || _mouseActivationState.IsPending
+        || HasSuppressedButtonUps;
+
+    private bool IsActivationGestureCandidate(int message, uint mouseData)
+    {
+        MouseActivationButton button = GetActivationButton(message, mouseData);
+        if (_mouseActivationState.IsPending)
+        {
+            return _mouseActivationState.IsExpectedChord(_mousePattern, button);
+        }
+
+        return message switch
+        {
+            WmMButtonDown => _mousePattern is MouseActivationPattern.MiddleClick or MouseActivationPattern.MiddleThenRight,
+            WmRButtonDown => _mousePattern == MouseActivationPattern.RightThenLeft,
+            WmXButtonDown => (_mousePattern == MouseActivationPattern.XButton1 && button == MouseActivationButton.XButton1)
+                || (_mousePattern == MouseActivationPattern.XButton2 && button == MouseActivationButton.XButton2),
+            _ => false
+        };
+    }
+
+    private void QueueExternalButtonDownIfOutside(POINT point)
+    {
+        if (_dismissOnExternalClick && _window.IsVisible && IsOutsideProcessWindow(point))
+        {
+            QueueExternalButtonDown();
+        }
+    }
+
+    private bool IsOutsideProcessWindow(POINT point)
+    {
+        if (!_dismissOnExternalClick || !_window.IsVisible)
+        {
+            return false;
+        }
+
+        IntPtr target = WindowFromPoint(point);
+        if (target == IntPtr.Zero)
+        {
+            return true;
+        }
+
+        uint threadId = GetWindowThreadProcessId(target, out uint processId);
+        return threadId == 0 || processId != _processId;
+    }
+
+    private void QueueExternalButtonDown()
+    {
+        void RaiseIfStillVisible()
+        {
+            if (_disposed || !_dismissOnExternalClick || !_window.IsVisible)
+            {
+                return;
+            }
+
+            try
+            {
+                ExternalButtonDown?.Invoke();
+            }
+            catch
+            {
+                // UI通知先の例外をフック処理へ伝播させません。
+            }
+        }
+
+        if (!_dismissOnExternalClick || !_window.IsVisible)
+        {
+            return;
+        }
+
+        if (_window.Dispatcher.CheckAccess())
+        {
+            RaiseIfStillVisible();
+            return;
+        }
+
+        try
+        {
+            _window.Dispatcher.Invoke(new Action(RaiseIfStillVisible), DispatcherPriority.Send);
+        }
+        catch (InvalidOperationException)
+        {
+            // Dispatcher終了後の通知は破棄します。
+        }
+    }
 
     private static bool IsButtonDownMessage(int message) =>
         message is WmLButtonDown or WmRButtonDown or WmMButtonDown or WmXButtonDown;
@@ -1105,6 +1242,12 @@ public sealed class DesktopIntegration : IDisposable
 
     private void ShowWindow()
     {
+        if (_showLauncher != null)
+        {
+            _showLauncher();
+            return;
+        }
+
         if (_window.WindowState == WindowState.Minimized)
         {
             _window.WindowState = WindowState.Normal;

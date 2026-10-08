@@ -47,7 +47,10 @@
       </DockPanel>
       <TreeView x:Name="CategoryTree" Grid.Row="2" Background="Transparent" BorderThickness="0" FontSize="12"
        Foreground="{DynamicResource Ink}" SelectedItemChanged="CategoryTree_SelectedItemChanged" HorizontalContentAlignment="Stretch"
-       ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+       ScrollViewer.HorizontalScrollBarVisibility="Disabled" AllowDrop="True"
+       PreviewMouseLeftButtonDown="CategoryOrder_MouseDown" PreviewMouseMove="CategoryOrder_MouseMove" PreviewMouseLeftButtonUp="CategoryOrder_MouseUp"
+       PreviewDragOver="CategoryOrder_DragOver" PreviewDragLeave="CategoryOrder_DragLeave" PreviewDrop="CategoryOrder_Drop"
+       ToolTip="カテゴリは同じ階層内でドラッグして並べ替えできます。">
        <TreeView.Resources>
         <Style TargetType="TreeViewItem">
          <Setter Property="IsSelected" Value="{Binding IsSelected, Mode=TwoWay}" />
@@ -66,7 +69,7 @@
              <ControlTemplate.Triggers><Trigger Property="IsChecked" Value="True"><Setter TargetName="Arrow" Property="RenderTransform"><Setter.Value><RotateTransform Angle="90" /></Setter.Value></Setter></Trigger></ControlTemplate.Triggers>
             </ControlTemplate></ToggleButton.Template>
            </ToggleButton>
-           <Border x:Name="HeaderFrame" Grid.Column="1" Background="Transparent" CornerRadius="4" Padding="4,4">
+           <Border x:Name="HeaderFrame" Grid.Column="1" Background="Transparent" BorderBrush="{DynamicResource Accent}" BorderThickness="0" CornerRadius="4" Padding="4,4">
             <ContentPresenter x:Name="PART_Header" ContentSource="Header" HorizontalAlignment="Stretch" />
            </Border>
            <ItemsPresenter x:Name="ChildItems" Grid.Row="1" Grid.Column="1" />
@@ -137,11 +140,13 @@
        <ListBox x:Name="LinkList" Background="Transparent" Foreground="{DynamicResource Ink}" BorderThickness="0" Padding="3"
         ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.VerticalScrollBarVisibility="Auto"
         VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
-        PreviewMouseLeftButtonDown="LinkList_MouseDown" PreviewMouseLeftButtonUp="LinkList_MouseUp" PreviewMouseRightButtonUp="LinkList_RightClick">
+        AllowDrop="True" PreviewMouseLeftButtonDown="LinkList_MouseDown" PreviewMouseLeftButtonUp="LinkList_MouseUp"
+        PreviewMouseMove="LinkOrder_MouseMove" PreviewDragOver="LinkOrder_DragOver" PreviewDragLeave="LinkOrder_DragLeave" PreviewDrop="LinkOrder_Drop"
+        PreviewMouseRightButtonUp="LinkList_RightClick" ToolTip="リンクをドラッグして並べ替えます。最近使ったリンクでは順序を変更できません。">
         <ListBox.ItemContainerStyle><Style TargetType="ListBoxItem">
          <Setter Property="Padding" Value="0" /><Setter Property="Margin" Value="0,0,0,1" /><Setter Property="HorizontalContentAlignment" Value="Stretch" />
          <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ListBoxItem">
-          <Border x:Name="Row" Background="Transparent" CornerRadius="3" Height="32" Padding="5,0">
+          <Border x:Name="Row" Background="Transparent" BorderBrush="{DynamicResource Accent}" BorderThickness="0" CornerRadius="3" Height="32" Padding="5,0">
            <ContentPresenter VerticalAlignment="Center" />
           </Border>
           <ControlTemplate.Triggers>
@@ -203,7 +208,7 @@
     <DockPanel VerticalAlignment="Center">
      <TextBlock DockPanel.Dock="Right" x:Name="BuildLabel" Foreground="{DynamicResource FooterInk}" FontSize="10" Margin="10,0,0,0" />
      <TextBlock DockPanel.Dock="Right" x:Name="ActivationHint" Foreground="{DynamicResource FooterInk}" FontSize="10" />
-     <TextBlock x:Name="SaveStatus" Text="● 保存済み" Foreground="{DynamicResource SaveInk}" FontSize="10" TextTrimming="CharacterEllipsis" ToolTip="登録データはこのPCに保存します。↑↓ 選択 / Enter 開く / Esc 閉じる" />
+     <TextBlock x:Name="SaveStatus" Text="● 保存済み" Foreground="{DynamicResource SaveInk}" FontSize="10" TextTrimming="CharacterEllipsis" ToolTip="登録データはこのPCに保存します。ドラッグで順序変更 / ↑↓ 選択 / Enter 開く / Esc 閉じる" />
     </DockPanel>
    </Border>
   </Grid>
