@@ -1,19 +1,16 @@
 using System;
-using System.Collections.Generic;
 using System.Runtime.InteropServices;
 
 namespace LinkLauncher.Services;
 
 /// <summary>
-/// Windowsの前面化制限を尊重しながら、対象ウィンドウの表示と入力キューの調整を行います。
+/// Windowsの前面化制限を尊重しながら、対象ウィンドウのZ順と前面化を調整します。
 /// </summary>
 public static class WindowActivation
 {
-    private static readonly IntPtr HwndTop = IntPtr.Zero;
     private static readonly IntPtr HwndTopmost = new(-1);
     private static readonly IntPtr HwndNotTopmost = new(-2);
 
-    private const int GwHwndPrev = 3;
     private const int GwlExStyle = -20;
     private const int WsExTopmost = 0x00000008;
     private const uint SwpNoSize = 0x0001;
@@ -36,8 +33,31 @@ public static class WindowActivation
     }
 
     /// <summary>
-    /// 対象を前面化します。所有する可視ポップアップがあればそちらを優先し、
-    /// 最後のZ順変更が前面化に失敗した場合は変更前の位置へ戻します。
+    /// 指定したウィンドウが現在の前面ウィンドウか確認します。
+    /// </summary>
+    public static bool IsForegroundWindow(IntPtr hwnd)
+    {
+        return hwnd != IntPtr.Zero
+            && IsWindow(hwnd)
+            && GetForegroundWindow() == hwnd;
+    }
+
+    /// <summary>
+    /// 所有する可視ポップアップがあればそれを優先し、前面にあるか確認します。
+    /// </summary>
+    public static bool IsTargetForeground(IntPtr owner)
+    {
+        if (owner == IntPtr.Zero || !IsWindow(owner))
+        {
+            return false;
+        }
+
+        return IsForegroundWindow(ResolveActivePopup(owner));
+    }
+
+    /// <summary>
+    /// 対象をZ順の先頭へ移動してから前面化します。所有する可視ポップアップがあればそちらを優先します。
+    /// 通常ウィンドウは一時的にTopmostへ移し、前面化後に通常帯の先頭へ戻します。
     /// </summary>
     public static bool TryActivate(IntPtr hwnd, bool isTopmost = false)
     {
@@ -52,17 +72,36 @@ public static class WindowActivation
             return false;
         }
 
-        if (SetForegroundWindow(target))
+        bool preserveTopmost = isTopmost || IsTopmost(target);
+        bool raised = SetWindowPos(target, HwndTopmost, 0, 0, 0, 0, SwpNoMove | SwpNoSize | SwpNoActivate);
+        if (!raised || !IsTopmost(target))
         {
-            return true;
+            RestoreTopmostState(target, preserveTopmost);
+            RequestForeground(target);
+            return IsForegroundWindow(target);
         }
 
-        if (TryActivateWithAttachedInput(target))
+        RequestForeground(target);
+
+        if (!preserveTopmost)
         {
-            return true;
+            bool returnedToNormalBand = SetWindowPos(
+                target,
+                HwndNotTopmost,
+                0,
+                0,
+                0,
+                0,
+                SwpNoMove | SwpNoSize | SwpNoActivate)
+                && !IsTopmost(target);
+
+            if (!returnedToNormalBand)
+            {
+                RestoreTopmostState(target, preserveTopmost);
+            }
         }
 
-        return TryActivateWithRestoredZOrder(target, isTopmost);
+        return IsForegroundWindow(target);
     }
 
     private static IntPtr ResolveActivePopup(IntPtr owner)
@@ -77,106 +116,22 @@ public static class WindowActivation
         return popupProcessId == (uint)Environment.ProcessId ? popup : owner;
     }
 
-    private static bool TryActivateWithAttachedInput(IntPtr target)
+    private static void RequestForeground(IntPtr target)
     {
-        uint currentThread = GetCurrentThreadId();
-        uint targetThread = GetWindowThreadProcessId(target, out _);
-        IntPtr foreground = GetForegroundWindow();
-        uint foregroundThread = foreground == IntPtr.Zero
-            ? 0
-            : GetWindowThreadProcessId(foreground, out _);
-        List<(uint Attach, uint AttachTo)> attached = new(2);
-
-        try
-        {
-            AttachIfDifferent(currentThread, targetThread, attached);
-            AttachIfDifferent(currentThread, foregroundThread, attached);
-            return SetForegroundWindow(target);
-        }
-        finally
-        {
-            for (int index = attached.Count - 1; index >= 0; index--)
-            {
-                (uint attach, uint attachTo) = attached[index];
-                AttachThreadInput(attach, attachTo, false);
-            }
-        }
+        // SetForegroundWindowの戻り値だけではなく、目的のHWNDが実際に前面かで判定する。
+        _ = SetForegroundWindow(target);
     }
 
-    private static void AttachIfDifferent(
-        uint currentThread,
-        uint otherThread,
-        List<(uint Attach, uint AttachTo)> attached)
+    private static void RestoreTopmostState(IntPtr target, bool preserveTopmost)
     {
-        if (otherThread == 0 || otherThread == currentThread)
+        if (!IsWindow(target) || IsTopmost(target) == preserveTopmost)
         {
             return;
         }
 
-        foreach ((uint attach, uint attachTo) in attached)
-        {
-            if ((attach == currentThread && attachTo == otherThread)
-                || (attach == otherThread && attachTo == currentThread))
-            {
-                return;
-            }
-        }
-
-        if (AttachThreadInput(currentThread, otherThread, true))
-        {
-            attached.Add((currentThread, otherThread));
-        }
-    }
-
-    private static bool TryActivateWithRestoredZOrder(IntPtr target, bool isTopmost)
-    {
-        IntPtr previous = GetWindow(target, GwHwndPrev);
-        bool targetWasTopmost = isTopmost || IsTopmost(target);
-        bool moved = SetWindowPos(
-            target,
-            HwndTop,
-            0,
-            0,
-            0,
-            0,
-            SwpNoMove | SwpNoSize | SwpNoActivate);
-
-        if (!moved)
-        {
-            return false;
-        }
-
-        bool activated = false;
-        try
-        {
-            activated = SetForegroundWindow(target);
-            return activated;
-        }
-        finally
-        {
-            if (!activated)
-            {
-                RestoreZOrder(target, previous, targetWasTopmost);
-            }
-        }
-    }
-
-    private static void RestoreZOrder(IntPtr target, IntPtr previous, bool targetWasTopmost)
-    {
-        if (previous != IntPtr.Zero
-            && previous != target
-            && IsWindow(previous)
-            && IsTopmost(previous) == targetWasTopmost)
-        {
-            if (SetWindowPos(target, previous, 0, 0, 0, 0, SwpNoMove | SwpNoSize | SwpNoActivate))
-            {
-                return;
-            }
-        }
-
         SetWindowPos(
             target,
-            targetWasTopmost ? HwndTopmost : HwndNotTopmost,
+            preserveTopmost ? HwndTopmost : HwndNotTopmost,
             0,
             0,
             0,
@@ -204,15 +159,8 @@ public static class WindowActivation
     private static extern bool IsWindowVisible(IntPtr hwnd);
 
     [DllImport("user32.dll")]
-    private static extern IntPtr GetWindow(IntPtr hwnd, int command);
-
-    [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool SetForegroundWindow(IntPtr hwnd);
-
-    [DllImport("user32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool AttachThreadInput(uint attach, uint attachTo, [MarshalAs(UnmanagedType.Bool)] bool attachInput);
 
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
@@ -220,7 +168,4 @@ public static class WindowActivation
 
     [DllImport("user32.dll", EntryPoint = "GetWindowLongW")]
     private static extern int GetWindowLong(IntPtr hwnd, int index);
-
-    [DllImport("kernel32.dll")]
-    private static extern uint GetCurrentThreadId();
 }

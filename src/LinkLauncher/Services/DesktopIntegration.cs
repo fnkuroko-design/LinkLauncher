@@ -78,6 +78,8 @@ public sealed class DesktopIntegration : IDisposable
     private readonly Action _showSettings;
     private readonly Action _exit;
     private readonly Action? _showLauncher;
+    private readonly Func<Action?>? _captureMouseActivationCompletion;
+    private readonly MouseActivationCompletion _mouseActivationCompletion = new();
     private readonly Forms.NotifyIcon _notifyIcon;
     private readonly Forms.ContextMenuStrip _trayMenu;
     private readonly LowLevelMouseProc _mouseHookProc;
@@ -98,6 +100,8 @@ public sealed class DesktopIntegration : IDisposable
     private bool _swallowLeftUp;
     private int _swallowXButtonUp;
     private bool _dismissOnExternalClick;
+    private bool _mouseActivationCallbackQueued;
+    private long _mouseActivationTicket;
     private bool _disposed;
 
     public event Action<string>? Warning;
@@ -109,13 +113,15 @@ public sealed class DesktopIntegration : IDisposable
 
     public string HotkeyLabel => _hotkeyLabel;
 
-    public DesktopIntegration(Window window, Action toggle, Action showSettings, Action exit, Action? showLauncher = null)
+    public DesktopIntegration(Window window, Action toggle, Action showSettings, Action exit,
+        Action? showLauncher = null, Func<Action?>? captureMouseActivationCompletion = null)
     {
         _window = window ?? throw new ArgumentNullException(nameof(window));
         _toggle = toggle ?? throw new ArgumentNullException(nameof(toggle));
         _showSettings = showSettings ?? throw new ArgumentNullException(nameof(showSettings));
         _exit = exit ?? throw new ArgumentNullException(nameof(exit));
         _showLauncher = showLauncher;
+        _captureMouseActivationCompletion = captureMouseActivationCompletion;
         _mouseHookProc = MouseHookCallback;
         _processIntegrityLevel = TryGetProcessIntegrityLevel(GetCurrentProcess(), out uint integrityLevel)
             ? integrityLevel
@@ -265,6 +271,7 @@ public sealed class DesktopIntegration : IDisposable
         }
 
         bool mouseSettingsChanged = _mousePattern != mousePattern;
+        if (mouseSettingsChanged) CancelMouseActivationCompletion();
         if (mouseSettingsChanged && _mouseActivationState.IsPending)
         {
             MouseActivationButton pendingButton = _mouseActivationState.Button;
@@ -330,6 +337,7 @@ public sealed class DesktopIntegration : IDisposable
         }
 
         _disposed = true;
+        CancelMouseActivationCompletion();
         _window.SourceInitialized -= OnSourceInitialized;
         _window.Closed -= OnWindowClosed;
 
@@ -518,6 +526,12 @@ public sealed class DesktopIntegration : IDisposable
 
             if (TryConsumeSuppressedUp(message, mouse.MouseData))
             {
+                if (!HasSuppressedButtonUps)
+                {
+                    Action? completion = _mouseActivationCompletion.Release();
+                    if (!_disposed && completion != null)
+                        QueueMouseActivationCompletion(_mouseActivationTicket, completion);
+                }
                 if (_disposed)
                 {
                     TryFinishDisposedMouseHook();
@@ -535,6 +549,9 @@ public sealed class DesktopIntegration : IDisposable
                 TryFinishDisposedMouseHook();
                 return CallNextHookSafely(code, wParam, lParam);
             }
+
+            // A fresh button press is a new user action, not part of the call gesture.
+            if (IsButtonDownMessage(message)) CancelMouseActivationCompletion();
 
             if (_dismissOnExternalClick
                 && _window.IsVisible
@@ -630,7 +647,7 @@ public sealed class DesktopIntegration : IDisposable
                     _mouseActivationState.Cancel();
                     SetSuppressedUp(primaryButton);
                     SetSuppressedUp(secondButton);
-                    QueueUiAction(_toggle);
+                    QueueMouseActivation();
                     return new IntPtr(1);
                 }
 
@@ -660,7 +677,7 @@ public sealed class DesktopIntegration : IDisposable
                     && CanSafelyInterceptAt(mouse.Point))
                 {
                     _swallowMiddleUp = true;
-                    QueueUiAction(_toggle);
+                    QueueMouseActivation();
                     return new IntPtr(1);
                 }
 
@@ -706,7 +723,7 @@ public sealed class DesktopIntegration : IDisposable
                 && CanSafelyInterceptAt(mouse.Point))
             {
                 _swallowXButtonUp = buttonId;
-                QueueUiAction(_toggle);
+                QueueMouseActivation();
                 return new IntPtr(1);
             }
 
@@ -931,6 +948,9 @@ public sealed class DesktopIntegration : IDisposable
         {
             return true;
         }
+
+        if ((_mouseActivationCompletion.IsPending || _mouseActivationCallbackQueued) && IsButtonDownMessage(message))
+            return true;
 
         if (_mouseActivationState.IsPending && IsButtonDownMessage(message))
         {
@@ -1259,6 +1279,36 @@ public sealed class DesktopIntegration : IDisposable
         }
 
         _window.Activate();
+    }
+
+    private void QueueMouseActivation()
+    {
+        long ticket = _mouseActivationTicket = _mouseActivationCompletion.Begin();
+        QueueUiAction(() =>
+        {
+            if (_disposed) return;
+            // Cancel invalidates only the follow-up, not the gesture's accepted toggle.
+            _toggle();
+            Action? completion = _mouseActivationCompletion.Capture(ticket, _captureMouseActivationCompletion?.Invoke());
+            if (completion != null) QueueMouseActivationCompletion(ticket, completion);
+        });
+    }
+
+    private void QueueMouseActivationCompletion(long ticket, Action completion)
+    {
+        _mouseActivationCallbackQueued = true;
+        QueueUiAction(() =>
+        {
+            if (_disposed || !_mouseActivationCompletion.IsCurrent(ticket)) return;
+            _mouseActivationCallbackQueued = false;
+            completion();
+        });
+    }
+
+    private void CancelMouseActivationCompletion()
+    {
+        _mouseActivationCompletion.Cancel();
+        _mouseActivationCallbackQueued = false;
     }
 
     private void QueueUiAction(Action action)

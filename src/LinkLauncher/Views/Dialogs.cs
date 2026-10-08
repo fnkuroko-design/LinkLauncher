@@ -71,6 +71,9 @@ internal static class DialogUi
 
 internal sealed class LinkEditor : Window
 {
+    private const string CategoryOrderDataFormat = "LinkLauncher.CategoryOrder.v1";
+    private const string LinkOrderDataFormat = "LinkLauncher.LinkOrder.v1";
+
     private readonly TextBox _name = new();
     private readonly TextBox _target = new();
     private readonly TextBox _tags = new();
@@ -84,9 +87,13 @@ internal sealed class LinkEditor : Window
     public LinkEditor(Library library, string categoryId, LinkItem? original = null, string? initialTarget = null)
     {
         _original = original;
+        AllowDrop = true;
+        PreviewDragEnter += LinkEditor_PreviewDragOver;
+        PreviewDragOver += LinkEditor_PreviewDragOver;
+        PreviewDrop += LinkEditor_PreviewDrop;
         _error.SetResourceReference(TextBlock.ForegroundProperty, "ErrorInk");
         var panel = DialogUi.Panel(this, original == null ? "リンクを追加" : "リンクを編集",
-            "ファイル・フォルダ・WebのURLを登録できます。", 570, 685);
+            "ファイル・フォルダをドロップ、またはURLを入力できます。", 570, 685);
         DialogUi.Label(panel, "名前"); panel.Children.Add(_name);
         DialogUi.Label(panel, "リンク先"); panel.Children.Add(_target);
         var browse = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 7, 0, 0) };
@@ -129,6 +136,53 @@ internal sealed class LinkEditor : Window
             _name.Text = uri.Host;
         else _name.Text = Path.GetFileName(target.TrimEnd(Path.DirectorySeparatorChar)) is { Length: > 0 } n ? n : target;
     }
+
+    private void LinkEditor_PreviewDragOver(object sender, DragEventArgs e)
+    {
+        e.Handled = true;
+        e.Effects = HasExternalFileDrop(e.Data) && (e.AllowedEffects & DragDropEffects.Copy) != 0
+            ? DragDropEffects.Copy
+            : DragDropEffects.None;
+    }
+
+    private void LinkEditor_PreviewDrop(object sender, DragEventArgs e)
+    {
+        e.Handled = true;
+        e.Effects = DragDropEffects.None;
+        if (!HasExternalFileDrop(e.Data) || e.Data.GetData(DataFormats.FileDrop, false) is not string[] paths)
+            return;
+
+        if (paths.Length != 1)
+        {
+            _error.Text = "ファイルまたはフォルダを1つずつドロップしてください。";
+            return;
+        }
+
+        string path = paths[0];
+        try
+        {
+            string target = LibraryStore.NormalizeTarget(path);
+            if (!File.Exists(target) && !Directory.Exists(target))
+            {
+                _error.Text = "存在するファイルまたはフォルダをドロップしてください。";
+                return;
+            }
+
+            SetTarget(target);
+            _error.Text = "";
+            e.Effects = DragDropEffects.Copy;
+        }
+        catch (Exception error) when (error is ArgumentException or IOException or InvalidDataException or NotSupportedException)
+        {
+            _error.Text = error.Message;
+        }
+    }
+
+    private static bool HasExternalFileDrop(IDataObject data) =>
+        !data.GetDataPresent(CategoryOrderDataFormat, false) &&
+        !data.GetDataPresent(LinkOrderDataFormat, false) &&
+        data.GetDataPresent(DataFormats.FileDrop, false) &&
+        data.GetData(DataFormats.FileDrop, false) is string[] paths && paths.Length > 0;
 
     private void Save()
     {

@@ -113,7 +113,8 @@ public partial class MainWindow : Window
         BuildLabel.Text = AppInfo.BuildLabel;
         ShowInTaskbar = true;
         Icon = BitmapFrameFromResource();
-        _desktop = new DesktopIntegration(this, ToggleLauncher, ShowSettings, Exit, ShowLauncher);
+        _desktop = new DesktopIntegration(this, ToggleLauncher, ShowSettings, Exit, ShowLauncher,
+            CaptureMouseActivationCompletion);
         _desktop.Warning += warning => ShowNotice(warning, true);
         _desktop.ExternalButtonDown += OnExternalButtonDown;
         IsVisibleChanged += (_, _) =>
@@ -191,10 +192,30 @@ public partial class MainWindow : Window
             long generation = _visibilityGeneration;
             Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(() =>
             {
-                if (_exiting || !IsVisible || generation != _visibilityGeneration || _modalDepth > 0) return;
-                if (!WindowActivation.IsProcessForeground()) WindowActivation.TryActivate(handle, Topmost);
-                if (WindowActivation.IsProcessForeground()) SearchBox.Focus();
+                RetryActivation(generation);
             }));
+        }
+        finally { _showingLauncher = false; }
+    }
+
+    private Action? CaptureMouseActivationCompletion()
+    {
+        if (_exiting || !IsVisible) return null;
+        long generation = _visibilityGeneration;
+        return () => RetryActivation(generation);
+    }
+
+    private void RetryActivation(long generation)
+    {
+        // A retry belongs only to the original show request. A new click or hide cancels it.
+        if (_exiting || !IsVisible || generation != _visibilityGeneration || _externalDismissPending ||
+            _menuOpen || IsOrderDragInProgress) return;
+        _showingLauncher = true;
+        try
+        {
+            var handle = new WindowInteropHelper(this).Handle;
+            WindowActivation.TryActivate(handle, Topmost);
+            if (_modalDepth == 0 && WindowActivation.IsTargetForeground(handle)) SearchBox.Focus();
         }
         finally { _showingLauncher = false; }
     }
