@@ -167,6 +167,7 @@ input-dのChordReleaseChecksは1回実行した。12個のチェックが成功�
 - 純状態試験12/12成功。記録は`artifacts/checks/dev9-menu-event-20261011-022541/result.txt`。WM_CANCELMODE配送成功は独自メニューが閉じる保証ではなく、タスクバー・デスクトップの実機改善は未確認。少数の手動確認まで正式配布ZIP/GitHub公開を行わない。
 - ソース`8ba707093bdfc3a9ba800c8bd706a07310dfaf72`からinput-mをRelease / win-x64 / framework-dependentでpublish成功、警告・エラー出力なし。試作は`artifacts/previews/LinkLauncher-v0.1.2-dev.9-input-m-menu-event-probe/`。アプリ内5バイナリ、native x64 DLLは16,384 bytes。19ソースのコピーと5バイナリのSHA-256を外側へ保持した。旧dev.8 ZIPのSHA-256は従前と一致した。
 - input-mは未起動。input-l PID 34204が単独常駐しているため、ユーザーのトレイ終了後に記録付きでmへ切り替える。設定・データ・スタートアップ先は変更しない。終了連絡後は残存なしとバイナリ一致を確認してから起動する。観測専用ツールは終了済み。
+- ユーザーのinput-l終了連絡後、残存なしと5バイナリのSHA-256一致を確認し、記録付きinput-mを起動した。本体PID 8892が単独常駐、status=53、stage 54/56/55が各detail 1で機能hookと診断hookの登録を確認した。記録先は`observations/20261011-022821-5e7c91dfb57a4077ad202d4c405435b4/`。起動前後のlibrary.json SHA-256は`c660706fa28a1e9796882f9eeebf6c18ff5b5575d82206330d83df0fe27fd859`で一致した。入力生成・カーソル操作・設定保存・スタートアップ変更は行っていない。実機改善は未確認。
 
 ## 試作の比較と復元
 
