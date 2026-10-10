@@ -98,6 +98,7 @@ try
         File.WriteAllText(legacy, json.Replace(originalSettings, legacySettings));
         var migrated = store.ReadImport(legacy);
         Require(migrated.Settings.MousePattern == MouseActivationPattern.None);
+        Require(!migrated.Settings.HideOnPointerLeave);
         Require(migrated.Links.Count == library.Links.Count && migrated.Categories.Count == library.Categories.Count);
         File.WriteAllText(legacy, json.Replace(originalSettings, legacySettings.Replace("\"GestureEnabled\":false", "\"GestureEnabled\":true")));
         Require(store.ReadImport(legacy).Settings.MousePattern == MouseActivationPattern.MiddleThenRight);
@@ -105,6 +106,12 @@ try
         store.Export(migrated, legacy);
         Require(store.ReadImport(legacy).Settings.MousePattern == MouseActivationPattern.RightThenLeft);
         Require(!File.ReadAllText(legacy).Contains("GestureEnabled"));
+        migrated.Settings.MousePattern = MouseActivationPattern.DesktopDoubleClick;
+        migrated.Settings.HideOnPointerLeave = true;
+        store.Export(migrated, legacy);
+        var desktopSettings = store.ReadImport(legacy).Settings;
+        Require(desktopSettings.MousePattern == MouseActivationPattern.DesktopDoubleClick);
+        Require(desktopSettings.HideOnPointerLeave);
         migrated.Settings.MousePattern = (MouseActivationPattern)999;
         Reject(() => store.Export(migrated, legacy));
     });

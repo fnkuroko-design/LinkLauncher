@@ -20,15 +20,16 @@ Check("中から右の順だけを組合せとして認識", () =>
     Require(state.Cancel());
     Require(state.Release() == MouseActivationReleaseAction.Pass);
 });
-Check("右から左の順だけを組合せとして認識", () =>
+Check("即時通過した右Downから左の順だけを組合せとして認識", () =>
 {
     var state = new MouseActivationState();
     Require(state.TryBegin(MouseActivationButton.Right, 300, 500));
+    Require(state.IsDownPassed);
     Require(state.IsExpectedChord(MouseActivationPattern.RightThenLeft, MouseActivationButton.Left));
     Require(!state.IsExpectedChord(MouseActivationPattern.RightThenLeft, MouseActivationButton.Right));
     Require(!state.IsExpectedChord(MouseActivationPattern.RightThenLeft, MouseActivationButton.XButton1));
 });
-Check("5pxを超える移動で通常ドラッグへ切り替える", () =>
+Check("5pxを超える移動で右の呼出候補だけを終了しUpを通す", () =>
 {
     var state = new MouseActivationState();
     Require(state.TryBegin(MouseActivationButton.Right, 300, 500));
@@ -36,6 +37,27 @@ Check("5pxを超える移動で通常ドラッグへ切り替える", () =>
     Require(state.ShouldRestoreOnMove(306, 500));
     Require(!state.ShouldRestoreOnMove(300, 490));
     Require(state.Release() == MouseActivationReleaseAction.Pass);
+});
+Check("静止した通常右クリックも合成入力へ進まずUpを通す", () =>
+{
+    var state = new MouseActivationState();
+    Require(state.TryBegin(MouseActivationButton.Right, -1200, 40));
+    Require(state.IsDownPassed);
+    Require(state.Release() == MouseActivationReleaseAction.Pass);
+    Require(!state.IsPending && !state.IsDownPassed);
+    Require(state.Release() == MouseActivationReleaseAction.Pass);
+});
+Check("即時右Down後の設定変更やキャンセルも再送を必要としない", () =>
+{
+    var state = new MouseActivationState();
+    Require(state.TryBegin(MouseActivationButton.Right, 0, 0));
+    Require(state.IsDownPassed);
+    Require(state.Cancel());
+    Require(!state.Cancel());
+    Require(state.Release() == MouseActivationReleaseAction.Pass);
+    Require(state.TryBegin(MouseActivationButton.Middle, 0, 0));
+    Require(!state.IsDownPassed);
+    Require(state.Release() == MouseActivationReleaseAction.ReplayClick);
 });
 Check("移動が検出されると二つ目ボタンで起動しない", () =>
 {
@@ -61,7 +83,7 @@ Check("設定変更時のCancelでUpのクリック再生を止める", () =>
     Require(state.Release() == MouseActivationReleaseAction.Pass);
 });
 
-Console.WriteLine($"PASS {checks}/7");
+Console.WriteLine($"PASS {checks}/9");
 return 0;
 
 void Check(string name, Action action)

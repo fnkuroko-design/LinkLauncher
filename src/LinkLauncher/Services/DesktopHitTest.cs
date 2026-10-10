@@ -12,14 +12,19 @@ public static class DesktopHitTest
 
     public static uint ProcessAtPhysicalPoint(int x, int y)
     {
+        IntPtr target = WindowAtPhysicalPoint(x, y);
+        if (target == IntPtr.Zero) return 0;
+        return GetWindowThreadProcessId(target, out uint processId) != 0 ? processId : 0;
+    }
+
+    public static IntPtr WindowAtPhysicalPoint(int x, int y)
+    {
         // 照会中だけDPIコンテキストも揃える。別のコンテキストから呼ばれても、
         // サブ画面の物理座標が仮想化されないようにし、呼び出し側の設定は戻す。
         IntPtr previous = SetThreadDpiAwarenessContext(PerMonitorV2);
         try
         {
-            IntPtr target = WindowFromPhysicalPoint(new POINT { X = x, Y = y });
-            if (target == IntPtr.Zero) return 0;
-            return GetWindowThreadProcessId(target, out uint processId) != 0 ? processId : 0;
+            return WindowFromPhysicalPoint(new POINT { X = x, Y = y });
         }
         finally
         {

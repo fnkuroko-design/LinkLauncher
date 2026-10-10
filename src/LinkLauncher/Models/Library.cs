@@ -18,7 +18,8 @@ public enum MouseActivationPattern
     MiddleThenRight,
     RightThenLeft,
     XButton1,
-    XButton2
+    XButton2,
+    DesktopDoubleClick
 }
 
 public sealed class LinkItem
@@ -50,6 +51,7 @@ public sealed class LauncherSettings
     public MouseActivationPattern MousePattern { get; set; } = MouseActivationPattern.MiddleThenRight;
     public bool HideAfterLaunch { get; set; } = true;
     public bool DismissOnDeactivate { get; set; } = true;
+    public bool HideOnPointerLeave { get; set; }
 }
 
 public sealed class Library

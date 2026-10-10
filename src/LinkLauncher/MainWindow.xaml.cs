@@ -84,6 +84,8 @@ public partial class MainWindow : Window
     private readonly LibraryStore _store;
     private readonly DesktopIntegration _desktop;
     private readonly StartupRegistration _startup = new();
+    private readonly DispatcherTimer _pointerLeaveDismissTimer = new(DispatcherPriority.Background)
+    { Interval = TimeSpan.FromMilliseconds(150) };
     private Library _library;
     private string _view = "all";
     private string? _categoryId;
@@ -99,6 +101,8 @@ public partial class MainWindow : Window
     private bool _categoriesVisible = true;
     private bool _showingLauncher;
     private bool _externalDismissPending;
+    private bool _pointerLeaveDismissPending;
+    private long _pointerLeaveDismissGeneration;
     private long _visibilityGeneration;
     private long? _queuedDismissGeneration;
     private string? _pressedLinkId;
@@ -110,6 +114,7 @@ public partial class MainWindow : Window
         _library = _store.Load();
         ThemeManager.Apply("System");
         InitializeComponent();
+        _pointerLeaveDismissTimer.Tick += PointerLeaveDismissTimer_Tick;
         BuildLabel.Text = AppInfo.BuildLabel;
         ShowInTaskbar = true;
         Icon = BitmapFrameFromResource();
@@ -121,6 +126,7 @@ public partial class MainWindow : Window
         {
             _visibilityGeneration++;
             _externalDismissPending = false;
+            CancelPointerLeaveDismiss();
         };
         ThemeManager.ThemeChanged += OnThemeChanged;
         Closed += (_, _) => ThemeManager.ThemeChanged -= OnThemeChanged;
@@ -166,6 +172,7 @@ public partial class MainWindow : Window
                 WindowActivation.TryActivate(new WindowInteropHelper(this).Handle, Topmost);
                 return;
             }
+            CancelPointerLeaveDismiss();
             WindowState = WindowState.Normal;
             Show();
             // SetWindowPos uses physical pixels and the target monitor's work area.
@@ -377,9 +384,15 @@ public partial class MainWindow : Window
 
     private T Modal<T>(Func<T> action)
     {
+        bool pointerLeaveWasEnabledAtEntry = _library.Settings.HideOnPointerLeave;
         _modalDepth++;
         try { return action(); }
-        finally { _modalDepth--; RequestAutoDismiss(); }
+        finally
+        {
+            _modalDepth--;
+            if (!pointerLeaveWasEnabledAtEntry) CancelPointerLeaveDismiss();
+            RequestAutoDismiss();
+        }
     }
 
     private void AddLink_Click(object sender, RoutedEventArgs e) => EditLink(null);
@@ -608,6 +621,7 @@ public partial class MainWindow : Window
         }
         if (!ApplyChange(l => l.Settings = next, false))
             return "設定を保存できませんでした。保存先を確認してください。" + RestoreSettings(previous, previousStartup);
+        if (!next.HideOnPointerLeave) CancelPointerLeaveDismiss();
         UpdateHints();
         return null;
     }
@@ -722,6 +736,8 @@ public partial class MainWindow : Window
     }
     private void Hide_Click(object sender, RoutedEventArgs e) => Hide();
     private void DismissNotice_Click(object sender, RoutedEventArgs e) => NoticePanel.Visibility = Visibility.Collapsed;
+    private void Window_MouseEnter(object sender, MouseEventArgs e) => CancelPointerLeaveDismiss();
+    private void Window_MouseLeave(object sender, MouseEventArgs e) => RequestPointerLeaveDismiss();
     private void Window_Deactivated(object? sender, EventArgs e)
     {
         _pressedLinkId = null;
@@ -738,7 +754,8 @@ public partial class MainWindow : Window
 
     private void RequestAutoDismiss()
     {
-        if (!_ready || !IsVisible || _exiting) return;
+        if (!_ready || !IsVisible || _exiting ||
+            (!_library.Settings.DismissOnDeactivate && !_library.Settings.HideOnPointerLeave)) return;
         long generation = _visibilityGeneration;
         if (_queuedDismissGeneration == generation) return;
         _queuedDismissGeneration = generation;
@@ -746,9 +763,77 @@ public partial class MainWindow : Window
         {
             if (_queuedDismissGeneration == generation) _queuedDismissGeneration = null;
             if (generation != _visibilityGeneration || !IsVisible || _exiting || _showingLauncher || _modalDepth > 0 ||
-                _pinned || _menuOpen || IsOrderDragInProgress || !_library.Settings.DismissOnDeactivate) return;
-            if (_externalDismissPending || !WindowActivation.IsProcessForeground()) Hide();
+                _pinned || _menuOpen || IsOrderDragInProgress) return;
+            if (_library.Settings.DismissOnDeactivate &&
+                (_externalDismissPending || !WindowActivation.IsProcessForeground()))
+            {
+                Hide();
+                return;
+            }
+            RequestPendingPointerLeaveDismiss();
         }));
+    }
+
+    private void RequestPointerLeaveDismiss()
+    {
+        if (!_ready || !IsVisible || _exiting || !_library.Settings.HideOnPointerLeave) return;
+        _pointerLeaveDismissPending = true;
+        RequestPendingPointerLeaveDismiss();
+    }
+
+    private void RequestPendingPointerLeaveDismiss()
+    {
+        if (!_pointerLeaveDismissPending || !_ready || !IsVisible || _exiting) return;
+        if (!_library.Settings.HideOnPointerLeave)
+        {
+            CancelPointerLeaveDismiss();
+            return;
+        }
+        if (_showingLauncher || _modalDepth > 0 || _pinned || _menuOpen || IsOrderDragInProgress) return;
+        if (_pointerLeaveDismissTimer.IsEnabled) return;
+
+        _pointerLeaveDismissGeneration = _visibilityGeneration;
+        _pointerLeaveDismissTimer.Start();
+    }
+
+    private void PointerLeaveDismissTimer_Tick(object? sender, EventArgs e)
+    {
+        _pointerLeaveDismissTimer.Stop();
+        if (_pointerLeaveDismissGeneration != _visibilityGeneration || !_ready || !IsVisible || _exiting ||
+            !_library.Settings.HideOnPointerLeave)
+        {
+            _pointerLeaveDismissPending = false;
+            return;
+        }
+        if (_showingLauncher || _modalDepth > 0 || _pinned || _menuOpen || IsOrderDragInProgress) return;
+        if (!IsPointerOutsideLauncherAndOwnedPopups())
+        {
+            _pointerLeaveDismissPending = false;
+            return;
+        }
+
+        _pointerLeaveDismissPending = false;
+        Hide();
+    }
+
+    private bool IsPointerOutsideLauncherAndOwnedPopups()
+    {
+        if (!DesktopIntegration.TryGetCursor(out var cursor)) return false;
+        IntPtr hwnd = new WindowInteropHelper(this).Handle;
+        if (hwnd == IntPtr.Zero || !GetWindowRect(hwnd, out var bounds)) return false;
+
+        int x = (int)cursor.X;
+        int y = (int)cursor.Y;
+        if (x >= bounds.Left && x < bounds.Right && y >= bounds.Top && y < bounds.Bottom) return false;
+
+        IntPtr hit = DesktopHitTest.WindowAtPhysicalPoint(x, y);
+        return hit == IntPtr.Zero || GetAncestor(hit, 3) != hwnd;
+    }
+
+    private void CancelPointerLeaveDismiss()
+    {
+        _pointerLeaveDismissTimer.Stop();
+        _pointerLeaveDismissPending = false;
     }
     private void Window_Closing(object? sender, CancelEventArgs e)
     {
@@ -771,4 +856,5 @@ public partial class MainWindow : Window
     [StructLayout(LayoutKind.Sequential)] private struct Rect { public int Left, Top, Right, Bottom; }
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool GetWindowRect(IntPtr hwnd, out Rect rect);
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int width, int height, uint flags);
+    [DllImport("user32.dll")] private static extern IntPtr GetAncestor(IntPtr hwnd, uint flags);
 }

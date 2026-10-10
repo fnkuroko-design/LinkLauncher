@@ -253,7 +253,9 @@ internal sealed record MouseActivationChoice(MouseActivationPattern Pattern, str
         new(MouseActivationPattern.MiddleThenRight, "ホイールを押しながら右クリック", "ホイール＋右",
             "ホイールボタンを押したまま、動かさずに右ボタンを押すとすぐ呼び出します。\nホイールだけで動かした場合は通常のドラッグ、離した場合は通常のクリックになります。"),
         new(MouseActivationPattern.RightThenLeft, "右ボタンを押しながら左クリック", "右＋左",
-            "右ボタンを先に押し、動かさずに左ボタンを押すとすぐ呼び出します。\n右だけで動かした場合は通常のドラッグ、離した場合は通常のクリックになります。"),
+            "右ボタンを先に押し、動かさずに左ボタンを押すとすぐ呼び出します。\n通常の右クリック・右ドラッグはそのまま使えます。右を押した瞬間に動く消しゴム等とは競合する場合があります。"),
+        new(MouseActivationPattern.DesktopDoubleClick, "デスクトップの空白をダブルクリック", "デスクトップをダブルクリック",
+            "デスクトップのアイコンがない場所をダブルクリックして呼び出します。\nアイコンや他アプリ上のダブルクリックには反応しません。"),
         new(MouseActivationPattern.MiddleClick, "ホイールクリック", "ホイールクリック",
             "ホイールボタンを押すとすぐ呼び出します。\n他アプリのホイールクリック（リンクを別タブで開く、自動スクロール等）は使えなくなります。"),
         new(MouseActivationPattern.XButton1, "マウスの戻るボタン", "戻るボタン",
@@ -272,6 +274,7 @@ internal sealed class SettingsDialog : Window
     private readonly CheckBox _startup = new() { Content = "Windowsへのサインイン時に起動する" };
     private readonly CheckBox _hideAfterLaunch = new() { Content = "リンクを開いたらランチャーを閉じる" };
     private readonly CheckBox _dismiss = new() { Content = "他の画面をクリックしたら閉じる" };
+    private readonly CheckBox _hideOnPointerLeave = new() { Content = "カーソルがランチャーの外へ出たら閉じる" };
     private readonly TextBlock _error = new() { Foreground = Brushes.Firebrick, TextWrapping = TextWrapping.Wrap, FontSize = 12 };
     private readonly Func<LauncherSettings, bool, string?> _apply;
 
@@ -294,7 +297,7 @@ internal sealed class SettingsDialog : Window
         DialogUi.Label(panel, "起動・画面の動作");
         _startup.IsChecked = startupEnabled;
         _startup.ToolTip = "画面を開かずタスクトレイに常駐します。このWindowsユーザーに適用します。";
-        panel.Children.Add(_startup); panel.Children.Add(_hideAfterLaunch); panel.Children.Add(_dismiss);
+        panel.Children.Add(_startup); panel.Children.Add(_hideAfterLaunch); panel.Children.Add(_dismiss); panel.Children.Add(_hideOnPointerLeave);
         panel.Children.Add(DialogUi.Description("表示モードはWindowsの「アプリのモード」に自動で合わせます。", 11, new Thickness(0, 8, 0, 3)));
         DialogUi.Label(panel, "データ");
         var actions = new StackPanel { Orientation = Orientation.Horizontal };
@@ -308,6 +311,7 @@ internal sealed class SettingsDialog : Window
         panel.Children.Add(_error);
         DialogUi.Buttons(this, panel, Save);
         _hideAfterLaunch.IsChecked = settings.HideAfterLaunch; _dismiss.IsChecked = settings.DismissOnDeactivate;
+        _hideOnPointerLeave.IsChecked = settings.HideOnPointerLeave;
     }
 
     private void Save()
@@ -316,7 +320,8 @@ internal sealed class SettingsDialog : Window
         {
             Hotkey = _hotkey.SelectedItem as string ?? "Ctrl + Alt + Space",
             MousePattern = (_mouse.SelectedItem as MouseActivationChoice)?.Pattern ?? MouseActivationPattern.None,
-            HideAfterLaunch = _hideAfterLaunch.IsChecked == true, DismissOnDeactivate = _dismiss.IsChecked == true
+            HideAfterLaunch = _hideAfterLaunch.IsChecked == true, DismissOnDeactivate = _dismiss.IsChecked == true,
+            HideOnPointerLeave = _hideOnPointerLeave.IsChecked == true
         };
         string? error = _apply(settings, _startup.IsChecked == true);
         if (error == null) DialogResult = true;

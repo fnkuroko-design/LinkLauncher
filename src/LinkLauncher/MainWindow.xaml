@@ -6,6 +6,7 @@
  Title="LinkLauncher" Width="700" Height="440" MinWidth="520" MinHeight="320"
  WindowStyle="None" ResizeMode="CanResize" WindowStartupLocation="CenterScreen"
  AllowDrop="True" PreviewKeyDown="Window_KeyDown" Drop="Window_Drop" DragOver="Window_DragOver"
+ MouseEnter="Window_MouseEnter" MouseLeave="Window_MouseLeave"
  Deactivated="Window_Deactivated" Closing="Window_Closing">
  <shell:WindowChrome.WindowChrome>
   <shell:WindowChrome CaptionHeight="0" CornerRadius="8" GlassFrameThickness="0" ResizeBorderThickness="5" />

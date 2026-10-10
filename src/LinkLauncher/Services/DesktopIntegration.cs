@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Resources;
@@ -37,6 +38,8 @@ public sealed class DesktopIntegration : IDisposable
     private const int WmMButtonUp = 0x0208;
     private const int WmXButtonDown = 0x020B;
     private const int WmXButtonUp = 0x020C;
+    private const int WmMouseWheel = 0x020A;
+    private const int WmMouseHWheel = 0x020E;
     private const uint InputMouse = 0;
     private const uint MouseEventMove = 0x0001;
     private const uint MouseEventLeftDown = 0x0002;
@@ -51,6 +54,8 @@ public sealed class DesktopIntegration : IDisposable
     private const int SmYVirtualScreen = 77;
     private const int SmCxVirtualScreen = 78;
     private const int SmCyVirtualScreen = 79;
+    private const int SmCxDoubleClick = 36;
+    private const int SmCyDoubleClick = 37;
     private const uint ProcessQueryLimitedInformation = 0x1000;
     private const uint TokenQuery = 0x0008;
     private const int TokenIntegrityLevel = 25;
@@ -95,6 +100,16 @@ public sealed class DesktopIntegration : IDisposable
     private string _hotkeyLabel = string.Empty;
     private MouseActivationPattern _mousePattern;
     private readonly MouseActivationState _mouseActivationState = new();
+    private MousePressTarget _rightPressTarget;
+    private readonly DesktopDoubleClickState _desktopDoubleClickState = new();
+    private POINT _desktopFirstPoint;
+    private IntPtr _desktopFirstWindow;
+    private IntPtr _desktopSecondWindow;
+    private bool _desktopFirstClickWasVisible;
+    private POINT _desktopRequestPoint;
+    private int _desktopToleranceX, _desktopToleranceY;
+    private long _desktopRequestTicket;
+    private bool _desktopHitTestPending;
     private bool _swallowMiddleUp;
     private bool _swallowRightUp;
     private bool _swallowLeftUp;
@@ -271,7 +286,11 @@ public sealed class DesktopIntegration : IDisposable
         }
 
         bool mouseSettingsChanged = _mousePattern != mousePattern;
-        if (mouseSettingsChanged) CancelMouseActivationCompletion();
+        if (mouseSettingsChanged)
+        {
+            CancelMouseActivationCompletion();
+            CancelDesktopDoubleClick();
+        }
         if (mouseSettingsChanged && _mouseActivationState.IsPending)
         {
             MouseActivationButton pendingButton = _mouseActivationState.Button;
@@ -338,6 +357,7 @@ public sealed class DesktopIntegration : IDisposable
 
         _disposed = true;
         CancelMouseActivationCompletion();
+        CancelDesktopDoubleClick();
         _window.SourceInitialized -= OnSourceInitialized;
         _window.Closed -= OnWindowClosed;
 
@@ -472,6 +492,7 @@ public sealed class DesktopIntegration : IDisposable
             if (_registeredHotkeys.ContainsKey(id))
             {
                 handled = true;
+                CancelDesktopDoubleClick();
                 QueueUiAction(_toggle);
             }
         }
@@ -516,11 +537,14 @@ public sealed class DesktopIntegration : IDisposable
         bool pendingUpBeingProcessed = pendingBeforeEvent
             && ((message == WmMButtonUp && pendingButtonBeforeEvent == MouseActivationButton.Middle)
                 || (message == WmRButtonUp && pendingButtonBeforeEvent == MouseActivationButton.Right));
+        bool pendingDownPassed = _mouseActivationState.IsDownPassed;
         try
         {
             MSLLHOOKSTRUCT mouse = Marshal.PtrToStructure<MSLLHOOKSTRUCT>(lParam);
             if (IsOwnReplayEvent(mouse) || IsInjectedMouseEvent(mouse))
             {
+                if (IsButtonDownMessage(message) || IsButtonUpMessage(message)
+                    || message is WmMouseWheel or WmMouseHWheel) CancelDesktopDoubleClick();
                 return CallNextHookSafely(code, wParam, lParam);
             }
 
@@ -553,6 +577,15 @@ public sealed class DesktopIntegration : IDisposable
             // A fresh button press is a new user action, not part of the call gesture.
             if (IsButtonDownMessage(message)) CancelMouseActivationCompletion();
 
+            if (_mousePattern == MouseActivationPattern.DesktopDoubleClick)
+                ObserveDesktopDoubleClick(message, mouse);
+
+            if (message is WmMouseWheel or WmMouseHWheel && _mouseActivationState.IsDownPassed)
+            {
+                _mouseActivationState.Cancel();
+                _rightPressTarget = default;
+            }
+
             if (_dismissOnExternalClick
                 && _window.IsVisible
                 && IsButtonDownMessage(message)
@@ -570,6 +603,14 @@ public sealed class DesktopIntegration : IDisposable
                 }
 
                 MouseActivationButton button = _mouseActivationState.Button;
+                if (_mouseActivationState.IsDownPassed)
+                {
+                    POINT downPoint = new() { X = _mouseActivationState.StartX, Y = _mouseActivationState.StartY };
+                    _mouseActivationState.Cancel();
+                    _rightPressTarget = default;
+                    QueueExternalButtonDownIfOutside(downPoint);
+                    return CallNextHookSafely(code, wParam, lParam);
+                }
                 POINT pressPoint = new() { X = _mouseActivationState.StartX, Y = _mouseActivationState.StartY };
                 MouseDragRestoreResult restore = RestorePendingPressForDrag(mouse.Point, button);
                 _mouseActivationState.Cancel();
@@ -598,14 +639,15 @@ public sealed class DesktopIntegration : IDisposable
         catch (Exception exception)
         {
             _mouseActivationState.Cancel();
-            if (pendingUpBeingProcessed)
+            _rightPressTarget = default;
+            if (pendingUpBeingProcessed && !pendingDownPassed)
             {
                 // DownをOSへ渡していないため、現在のUpだけを抑止します。
                 QueueWarning($"マウス操作を復元できませんでした: {exception.Message}");
                 return new IntPtr(1);
             }
 
-            if (pendingBeforeEvent)
+            if (pendingBeforeEvent && !pendingDownPassed)
             {
                 SetSuppressedUp(pendingButtonBeforeEvent);
             }
@@ -627,6 +669,26 @@ public sealed class DesktopIntegration : IDisposable
         {
             MouseActivationButton primaryButton = _mouseActivationState.Button;
             MouseActivationButton secondButton = GetActivationButton(message, mouse.MouseData);
+            if (_mouseActivationState.IsDownPassed)
+            {
+                bool canActivate = !_mouseActivationState.ShouldRestoreOnMove(mouse.Point.X, mouse.Point.Y)
+                    && _mouseActivationState.IsExpectedChord(_mousePattern, secondButton)
+                    && (GetAsyncKeyState(VkRightButton) & unchecked((short)0x8000)) != 0
+                    && !AreOtherMouseButtonsDownExcept(primaryButton, secondButton)
+                    && CanSafelyInterceptAt(mouse.Point)
+                    && MousePressCancellation.TryCancel(_rightPressTarget, mouse.Point.X, mouse.Point.Y);
+                _mouseActivationState.Cancel();
+                _rightPressTarget = default;
+                if (canActivate)
+                {
+                    SetSuppressedUp(primaryButton);
+                    SetSuppressedUp(secondButton);
+                    QueueMouseActivation();
+                    return new IntPtr(1);
+                }
+                // Downはすでに通過済み。失敗や他の組み合わせでも再送しない。
+                return CallNextHookSafely(code, wParam, lParam);
+            }
             if (_mouseActivationState.ShouldRestoreOnMove(mouse.Point.X, mouse.Point.Y))
             {
                 MouseDragRestoreResult restore = RestorePendingPressForDrag(mouse.Point, primaryButton);
@@ -701,13 +763,14 @@ public sealed class DesktopIntegration : IDisposable
 
         if (message == WmRButtonDown && _mousePattern == MouseActivationPattern.RightThenLeft)
         {
-            IntPtr result = BeginPendingPress(code, wParam, lParam, mouse, MouseActivationButton.Right);
-            if (!_mouseActivationState.IsPending)
+            if (!AreOtherMouseButtonsDownExcept(MouseActivationButton.Right))
             {
-                QueueExternalButtonDownIfOutside(mouse.Point);
+                _rightPressTarget = MousePressCancellation.Capture(mouse.Point.X, mouse.Point.Y, _processId);
+                if (_rightPressTarget.IsValid)
+                    _mouseActivationState.TryBegin(MouseActivationButton.Right, mouse.Point.X, mouse.Point.Y);
             }
-
-            return result;
+            if (!_mouseActivationState.IsPending) QueueExternalButtonDownIfOutside(mouse.Point);
+            return CallNextHookSafely(code, wParam, lParam);
         }
 
         if (message == WmXButtonDown)
@@ -767,7 +830,13 @@ public sealed class DesktopIntegration : IDisposable
         }
 
         MouseActivationButton button = _mouseActivationState.Button;
+        POINT downPoint = new() { X = _mouseActivationState.StartX, Y = _mouseActivationState.StartY };
         MouseActivationReleaseAction action = _mouseActivationState.Release();
+        if (button == MouseActivationButton.Right)
+        {
+            _rightPressTarget = default;
+            QueueExternalButtonDownIfOutside(downPoint);
+        }
         if (action == MouseActivationReleaseAction.ReplayClick)
         {
             IntPtr result = ReplayPendingClick(code, wParam, lParam, mouse.Point, button);
@@ -817,7 +886,10 @@ public sealed class DesktopIntegration : IDisposable
         }
 
         MouseActivationButton button = _mouseActivationState.Button;
+        bool downPassed = _mouseActivationState.IsDownPassed;
         _mouseActivationState.Cancel();
+        _rightPressTarget = default;
+        if (downPassed) return true;
         if (!GetPhysicalCursorPos(out POINT currentPoint) || !CanSafelyInjectAt(currentPoint))
         {
             QueueWarning("保留中のボタンDownを復元できません。対象ウィンドウの権限を確認できないため、入力を注入しませんでした。");
@@ -941,8 +1013,13 @@ public sealed class DesktopIntegration : IDisposable
 
         if (message == WmMouseMove)
         {
-            return _mouseActivationState.IsPending;
+            return _mouseActivationState.IsPending || _desktopDoubleClickState.IsPressed || _desktopHitTestPending;
         }
+
+        if (_mousePattern == MouseActivationPattern.DesktopDoubleClick
+            && (IsButtonDownMessage(message) || IsButtonUpMessage(message)
+                || message is WmMouseWheel or WmMouseHWheel)) return true;
+        if (message is WmMouseWheel or WmMouseHWheel) return _mouseActivationState.IsDownPassed;
 
         if (_dismissOnExternalClick && _window.IsVisible && IsButtonDownMessage(message))
         {
@@ -1265,6 +1342,7 @@ public sealed class DesktopIntegration : IDisposable
     private void QueueMouseActivation()
     {
         long ticket = _mouseActivationTicket = _mouseActivationCompletion.Begin();
+        if (!HasSuppressedButtonUps) _mouseActivationCompletion.Release();
         QueueUiAction(() =>
         {
             if (_disposed) return;
@@ -1272,6 +1350,99 @@ public sealed class DesktopIntegration : IDisposable
             _toggle();
             Action? completion = _mouseActivationCompletion.Capture(ticket, _captureMouseActivationCompletion?.Invoke());
             if (completion != null) QueueMouseActivationCompletion(ticket, completion);
+        });
+    }
+
+    private void ObserveDesktopDoubleClick(int message, MSLLHOOKSTRUCT mouse)
+    {
+        if (message == WmMouseMove)
+        {
+            _desktopDoubleClickState.Move(mouse.Point.X, mouse.Point.Y, _desktopDoubleClickState.IsPressed);
+            if (_desktopHitTestPending && !IsWithinDesktopRequest(mouse.Point)) _desktopRequestTicket++;
+            return;
+        }
+
+        if (message == WmLButtonDown)
+        {
+            _desktopRequestTicket++;
+            if (AreOtherMouseButtonsDownExcept(MouseActivationButton.Left))
+            {
+                _desktopDoubleClickState.Cancel();
+                return;
+            }
+            _desktopToleranceX = Math.Max(1, GetSystemMetrics(SmCxDoubleClick) / 2);
+            _desktopToleranceY = Math.Max(1, GetSystemMetrics(SmCyDoubleClick) / 2);
+            IntPtr hit = DesktopHitTest.WindowAtPhysicalPoint(mouse.Point.X, mouse.Point.Y);
+            if (_desktopDoubleClickState.Down(mouse.Point.X, mouse.Point.Y, mouse.Time,
+                GetDoubleClickTime(), _desktopToleranceX, _desktopToleranceY))
+                _desktopSecondWindow = hit;
+            else
+            {
+                _desktopFirstPoint = mouse.Point;
+                _desktopFirstWindow = hit;
+                _desktopFirstClickWasVisible = _window.IsVisible;
+                _desktopSecondWindow = IntPtr.Zero;
+            }
+            return;
+        }
+
+        if (message == WmLButtonUp)
+        {
+            if (_desktopDoubleClickState.Up(mouse.Point.X, mouse.Point.Y))
+                QueueDesktopDoubleClick(mouse.Point);
+            return;
+        }
+
+        if (IsButtonDownMessage(message) || IsButtonUpMessage(message)
+            || message is WmMouseWheel or WmMouseHWheel) CancelDesktopDoubleClick();
+    }
+
+    private void CancelDesktopDoubleClick()
+    {
+        _desktopDoubleClickState.Cancel();
+        _desktopRequestTicket++;
+    }
+
+    private bool IsWithinDesktopRequest(POINT point) =>
+        Math.Abs((long)point.X - _desktopRequestPoint.X) <= _desktopToleranceX
+        && Math.Abs((long)point.Y - _desktopRequestPoint.Y) <= _desktopToleranceY;
+
+    private void QueueDesktopDoubleClick(POINT point)
+    {
+        if (_desktopHitTestPending || _desktopFirstWindow == IntPtr.Zero
+            || _desktopFirstWindow != _desktopSecondWindow) return;
+        POINT first = _desktopFirstPoint;
+        IntPtr view = _desktopSecondWindow;
+        long request = _desktopRequestTicket;
+        bool wasVisible = _desktopFirstClickWasVisible;
+        _desktopRequestPoint = point;
+        _desktopHitTestPending = true;
+        // MSAAの跨プロセス照会は入力フック/UIスレッドで待たず、同時に1件だけ行う。
+        _ = Task.Run(() =>
+        {
+            bool blank = false;
+            try
+            {
+                blank = DesktopHitTest.WindowAtPhysicalPoint(first.X, first.Y) == view
+                    && DesktopHitTest.WindowAtPhysicalPoint(point.X, point.Y) == view
+                    && DesktopDoubleClick.IsBlankAt(first.X, first.Y)
+                    && DesktopDoubleClick.IsBlankAt(point.X, point.Y);
+            }
+            catch
+            {
+                // 不明なデスクトップや照会失敗は、通常のクリックだけを維持する。
+            }
+            QueueUiAction(() =>
+            {
+                _desktopHitTestPending = false;
+                if (_disposed || !blank || request != _desktopRequestTicket
+                    || _mousePattern != MouseActivationPattern.DesktopDoubleClick
+                    || wasVisible != _window.IsVisible
+                    || AreOtherMouseButtonsDownExcept()
+                    || !GetPhysicalCursorPos(out POINT current) || !IsWithinDesktopRequest(current)
+                    || DesktopHitTest.WindowAtPhysicalPoint(point.X, point.Y) != view) return;
+                QueueMouseActivation();
+            });
         });
     }
 
@@ -1442,6 +1613,9 @@ public sealed class DesktopIntegration : IDisposable
 
     [DllImport("user32.dll")]
     private static extern int GetSystemMetrics(int index);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetDoubleClickTime();
 
     [DllImport("user32.dll")]
     private static extern short GetAsyncKeyState(uint virtualKey);

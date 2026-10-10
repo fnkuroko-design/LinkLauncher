@@ -19,7 +19,7 @@ internal enum MouseActivationReleaseAction
 }
 
 /// <summary>
-/// マウスの先行ボタンと、移動による通常ドラッグへの復帰状態を保持します。
+/// 組み合わせ候補を保持します。右Downは通過済み、中Downだけを保留します。
 /// </summary>
 internal sealed class MouseActivationState
 {
@@ -33,6 +33,7 @@ internal sealed class MouseActivationState
 
     internal bool IsPending => _isPending;
     internal bool IsStationary => _isPending && !_movementDetected;
+    internal bool IsDownPassed => _isPending && _button == MouseActivationButton.Right;
     internal MouseActivationButton Button => _button;
     internal int StartX => _startX;
     internal int StartY => _startY;
@@ -94,7 +95,7 @@ internal sealed class MouseActivationState
             return MouseActivationReleaseAction.Pass;
         }
 
-        MouseActivationReleaseAction action = _movementDetected
+        MouseActivationReleaseAction action = IsDownPassed || _movementDetected
             ? MouseActivationReleaseAction.Pass
             : MouseActivationReleaseAction.ReplayClick;
         Reset();
