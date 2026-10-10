@@ -32,16 +32,6 @@
           CopyToPublishDirectory="PreserveNewest"
           Link="LinkLauncher.MouseHook.x64.dll"
           TargetPath="LinkLauncher.MouseHook.x64.dll" />
-    <None Include="$(InputBridgeOutputDirectory)LinkLauncher.MouseHook.x86.dll"
-          CopyToOutputDirectory="PreserveNewest"
-          CopyToPublishDirectory="PreserveNewest"
-          Link="LinkLauncher.MouseHook.x86.dll"
-          TargetPath="LinkLauncher.MouseHook.x86.dll" />
-    <None Include="$(InputBridgeOutputDirectory)LinkLauncher.MouseHookHost.x86.exe"
-          CopyToOutputDirectory="PreserveNewest"
-          CopyToPublishDirectory="PreserveNewest"
-          Link="LinkLauncher.MouseHookHost.x86.exe"
-          TargetPath="LinkLauncher.MouseHookHost.x86.exe" />
   </ItemGroup>
 
   <Target Name="BuildInputBridge" BeforeTargets="PrepareForBuild" Condition="'$(DesignTimeBuild)' != 'true'">

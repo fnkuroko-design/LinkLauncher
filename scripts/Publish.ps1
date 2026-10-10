@@ -49,9 +49,7 @@ try {
         'LinkLauncher.dll',
         'LinkLauncher.deps.json',
         'LinkLauncher.runtimeconfig.json',
-        'LinkLauncher.MouseHook.x64.dll',
-        'LinkLauncher.MouseHook.x86.dll',
-        'LinkLauncher.MouseHookHost.x86.exe'
+        'LinkLauncher.MouseHook.x64.dll'
     )
     foreach ($name in $requiredPublishFiles) {
         if (-not (Test-Path -LiteralPath (Join-Path $stageAppDirectory $name) -PathType Leaf)) {

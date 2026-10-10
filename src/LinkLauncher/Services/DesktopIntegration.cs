@@ -102,6 +102,9 @@ public sealed class DesktopIntegration : IDisposable
     private readonly MouseActivationState _mouseActivationState = new();
     private NativeMouseChord? _nativeMouseChord;
     private uint _nativeChordSequence;
+#if INPUT_PROBE
+    private long _probeButtonGeneration;
+#endif
     private readonly DesktopDoubleClickState _desktopDoubleClickState = new();
     private POINT _desktopFirstPoint;
     private IntPtr _desktopFirstWindow;
@@ -537,6 +540,7 @@ public sealed class DesktopIntegration : IDisposable
             {
 #if INPUT_PROBE
                 ChordInputProbe.Record($"native complete seq={sequence} status={_nativeMouseChord.Status}");
+                ObserveNativeReleaseState(sequence);
 #endif
                 Action? completion = _mouseActivationCompletion.Release();
                 if (completion is not null) QueueMouseActivationCompletion(_mouseActivationTicket, completion);
@@ -583,6 +587,8 @@ public sealed class DesktopIntegration : IDisposable
         }
 
 #if INPUT_PROBE
+        if (IsButtonDownMessage(message) || IsButtonUpMessage(message))
+            unchecked { _probeButtonGeneration++; }
         if (message is WmRButtonDown or WmLButtonDown)
             ChordInputProbe.Record($"hook down={message:X} pattern={_mousePattern} pending={_mouseActivationState.IsPending}");
 #endif
@@ -1390,6 +1396,29 @@ public sealed class DesktopIntegration : IDisposable
             if (completion != null) QueueMouseActivationCompletion(ticket, completion);
         });
     }
+
+#if INPUT_PROBE
+    private void ObserveNativeReleaseState(uint sequence)
+    {
+        long observedGeneration = _probeButtonGeneration;
+        ChordInputProbe.Record($"native released seq={sequence} asyncR={unchecked((ushort)GetAsyncKeyState(0x02)):X4} asyncL={unchecked((ushort)GetAsyncKeyState(0x01)):X4}");
+        var timer = new DispatcherTimer(DispatcherPriority.Background, _window.Dispatcher)
+        {
+            Interval = TimeSpan.FromMilliseconds(25)
+        };
+        timer.Tick += (_, _) =>
+        {
+            timer.Stop();
+            if (_disposed || observedGeneration != _probeButtonGeneration)
+            {
+                ChordInputProbe.Record($"native release recheck seq={sequence} skipped=new-input-or-disposed");
+                return;
+            }
+            ChordInputProbe.Record($"native release recheck seq={sequence} asyncR={unchecked((ushort)GetAsyncKeyState(0x02)):X4} asyncL={unchecked((ushort)GetAsyncKeyState(0x01)):X4}");
+        };
+        timer.Start();
+    }
+#endif
 
     private IntPtr BeginNativeMouseActivation(uint sequence)
     {

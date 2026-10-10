@@ -5,7 +5,7 @@
 #include "BridgeState.h"
 
 #define BRIDGE_SHARED_MAGIC 0x434D4C4CUL /* LLMC */
-#define BRIDGE_SHARED_VERSION 1UL
+#define BRIDGE_SHARED_VERSION 2UL
 #define BRIDGE_OWNER_MESSAGE (WM_APP + 0x39)
 #define BRIDGE_OWNER_BEGIN 1
 #define BRIDGE_OWNER_COMPLETE 2
@@ -26,7 +26,7 @@ typedef struct BRIDGE_SHARED
     LONG version;
     LONG byteSize;
     LONG ownerPid;
-    LONG padding;
+    volatile LONG otherButtons;
     ULONGLONG ownerHwnd;
     BRIDGE_STATE state;
 } BRIDGE_SHARED;

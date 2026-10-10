@@ -99,6 +99,20 @@ input-cで対象照合は成功したが、foreground要求後も元の画面が
 
 input-fの編集対象は`BridgeHook.c`の診断ビルド限定部分。固定幅の共有カウンターに入口回数と早期returnの理由、最後の対象・実行PID/TIDを保持する。外部からの読み取りで確認し、ファイルへの記録・同期通知をフック入口へ加えない。入力消費や呼び出し方式はeのままで、修正実装の成功試験とは数えない。受入条件は診断セクションの存在と共通layout、負のcodeの即時受け渡し、正式ビルドへの診断混入がない構造である。
 
+## 実行場所の相違への対応（input-g、実装中）
+
+input-fのデスクトップ空白でのポインター観測では、対象Explorer PID 11528/TID 11532の通知が本体PID 3256と補助PID 9488のinstaller側で実行された。共有取得やtarget照会の失敗ではなく、対象PID/TIDと実行PID/TIDの一致ガードで除外されていた。MouseProc/SetWindowsHookExの仕様はinstallerスレッドでの実行を許すため、この一致を全ての処理の前提にする設計は誤りだった。
+
+編集対象は`BridgeHook.c`、`BridgeHook.h`、`NativeMouseChord.cs`、プロジェクトと配布ファイルの定義、診断ビルド限定の`DesktopIntegration.cs`。64bitフック一本でsource側またはinstaller側に届く通知を処理する。32bitフック・補助プロセスは起動せず、重複した状態更新を避ける。32bit/64bitの通知先の相違を特定アプリの例外にしない。
+
+- 呼び出しの候補は通常の右DOWNで作り、右UPで解除する。LEFTDOWN時はそのキュー上の順序とtarget照合から右押下を判断し、installer側のGetKeyStateをsource側の状態として使わない。中・追加ボタンは同じ通知列で追跡する。二重クリックの2回目のDOWN通知も押下として扱う。
+- sourceスレッド自身のcaptureは従来の照合後に解除する。別スレッドで実行される場合はGetGUIThreadInfoでsource側のcaptureを確認し、PID/TID/rootが対象と一致する捕捉窓にだけ同期WM_CANCELMODEを送る。再照会でcaptureが解除されない場合、照会不成立やtimeoutの場合はLEFTDOWNを消費せず、通常の入力を通す。右DOWN時点の編集や、アプリ独自の内部フラグの取消しを保証しない。
+- 低レベルフックの物理DOWN/UPは通す。呼び出し時だけWH_MOUSEのウィンドウ宛てLEFTDOWNと対応UPを抑止する。この区別によりWindowsの非同期ボタン状態を残さない設計だが、改善は実機で確認する。診断版では完了直後と25msタイマー後に右・左のGetAsyncKeyStateを読み、high bitが消えているか観測する。新しいボタン入力があれば後の確認を飛ばす。low bitは押下中判定に使わない。
+- capture取消しとUI通知には経過時間から残り75msを渡す。同じメッセージキューへのSendMessageTimeoutではtimeoutが無視され、source自身のReleaseCaptureも同期処理を含むため、フック全体の厳密な75ms上限とは報告しない。通常の右クリック・右ドラッグの経路にはこれらの同期処理を加えない。
+- source側で実行される場合だけforeground権限付与を行う。installer側では既存の表示・一時Topmost・再活性化処理を使うが、前面化の成功を保証しない。表示、元メニューの抑止、解放後の左クリック、Windowsのボタン状態を別々に確認する。
+
+input-gは未ビルド・未実機確認。受入は従来どおりで、デスクトップでの呼び出しが改善してから、Codexの移動なしの通常メニューとPDF手書きの静止右DOWN通知・ドラッグ開始を少数の手動操作で確認する。診断を正式配布物へ残さない。
+
 ## 一次資料
 
 - [LowLevelMouseProc](https://learn.microsoft.com/en-us/windows/win32/winmsg/lowlevelmouseproc): 次のフックへの受け渡しと抑止。

@@ -2,13 +2,33 @@
 
 #define BRIDGE_LOCK_ATTEMPTS 4096L
 #define BRIDGE_MAP_NAME_CAPACITY 96
+#define BRIDGE_GESTURE_BUDGET_MS 75UL
 #define BRIDGE_PROBE_MESSAGE (WM_APP + 0x3A)
 #define BRIDGE_PROBE_RIGHT_SEEN 10
 #define BRIDGE_PROBE_LEFT_CANDIDATE 20
 #define BRIDGE_PROBE_LEFT_REJECTED 21
 #define BRIDGE_PROBE_SEND_FAILED 30
 #define BRIDGE_PROBE_ACK 31
+#define BRIDGE_PROBE_CAPTURE_FAILED 32
 #define BRIDGE_PROBE_FOREGROUND 40
+#define BRIDGE_PROBE_CONTEXT 41
+
+#define BRIDGE_OTHER_BUTTON_MIDDLE 0x00000001L
+#define BRIDGE_OTHER_BUTTON_X1 0x00000002L
+#define BRIDGE_OTHER_BUTTON_X2 0x00000004L
+
+enum BRIDGE_PROBE_CAPTURE_FAILURE
+{
+    BRIDGE_PROBE_CAPTURE_FAILURE_SOURCE_THREAD = 1,
+    BRIDGE_PROBE_CAPTURE_FAILURE_SOURCE_WINDOW = 2,
+    BRIDGE_PROBE_CAPTURE_FAILURE_RELEASE = 3,
+    BRIDGE_PROBE_CAPTURE_FAILURE_QUERY = 4,
+    BRIDGE_PROBE_CAPTURE_FAILURE_WINDOW = 5,
+    BRIDGE_PROBE_CAPTURE_FAILURE_BUDGET = 6,
+    BRIDGE_PROBE_CAPTURE_FAILURE_CANCEL = 7,
+    BRIDGE_PROBE_CAPTURE_FAILURE_RECHECK = 8,
+    BRIDGE_PROBE_CAPTURE_FAILURE_REMAINS = 9
+};
 
 #pragma data_seg(".LLCFG")
 static volatile LONG g_cfgOwnerPid = 0;
@@ -84,6 +104,20 @@ static volatile BRIDGE_PROBE_STATS g_probeStats = { 0 };
 #else
 #define BRIDGE_PROBE_COUNT(field) ((void)0)
 #define BRIDGE_PROBE_SET(field, value) ((void)0)
+#endif
+
+#if defined(_WIN64)
+static LONG BridgeReadOtherButtons(void)
+{
+    LONG buttons = 0;
+    if ((GetAsyncKeyState(VK_MBUTTON) & (SHORT)0x8000) != 0)
+        buttons |= BRIDGE_OTHER_BUTTON_MIDDLE;
+    if ((GetAsyncKeyState(VK_XBUTTON1) & (SHORT)0x8000) != 0)
+        buttons |= BRIDGE_OTHER_BUTTON_X1;
+    if ((GetAsyncKeyState(VK_XBUTTON2) & (SHORT)0x8000) != 0)
+        buttons |= BRIDGE_OTHER_BUTTON_X2;
+    return buttons;
+}
 #endif
 
 static HINSTANCE g_module = NULL;
@@ -293,12 +327,14 @@ static BOOL BridgeIsRootTarget(HWND window, HWND *root, DWORD *pid, DWORD *tid)
 
 static BOOL BridgeIsRightDown(UINT message)
 {
-    return message == WM_RBUTTONDOWN || message == WM_NCRBUTTONDOWN;
+    return message == WM_RBUTTONDOWN || message == WM_RBUTTONDBLCLK ||
+        message == WM_NCRBUTTONDOWN || message == WM_NCRBUTTONDBLCLK;
 }
 
 static BOOL BridgeIsLeftDown(UINT message)
 {
-    return message == WM_LBUTTONDOWN || message == WM_NCLBUTTONDOWN;
+    return message == WM_LBUTTONDOWN || message == WM_LBUTTONDBLCLK ||
+        message == WM_NCLBUTTONDOWN || message == WM_NCLBUTTONDBLCLK;
 }
 
 static BOOL BridgeIsRightUp(UINT message)
@@ -311,12 +347,166 @@ static BOOL BridgeIsLeftUp(UINT message)
     return message == WM_LBUTTONUP || message == WM_NCLBUTTONUP;
 }
 
+static BOOL BridgeGetOtherButtonChange(
+    UINT message,
+    const MOUSEHOOKSTRUCT *mouse,
+    LONG *button,
+    BOOL *isDown)
+{
+    switch (message)
+    {
+    case WM_MBUTTONDOWN:
+    case WM_MBUTTONDBLCLK:
+    case WM_NCMBUTTONDOWN:
+    case WM_NCMBUTTONDBLCLK:
+        *button = BRIDGE_OTHER_BUTTON_MIDDLE;
+        *isDown = TRUE;
+        return TRUE;
+    case WM_MBUTTONUP:
+    case WM_NCMBUTTONUP:
+        *button = BRIDGE_OTHER_BUTTON_MIDDLE;
+        *isDown = FALSE;
+        return TRUE;
+    case WM_XBUTTONDOWN:
+    case WM_XBUTTONDBLCLK:
+    case WM_NCXBUTTONDOWN:
+    case WM_NCXBUTTONDBLCLK:
+    case WM_XBUTTONUP:
+    case WM_NCXBUTTONUP:
+    {
+        WORD xButton;
+        if (mouse == NULL) return FALSE;
+        xButton = HIWORD(((const MOUSEHOOKSTRUCTEX *)mouse)->mouseData);
+        if (xButton == XBUTTON1) *button = BRIDGE_OTHER_BUTTON_X1;
+        else if (xButton == XBUTTON2) *button = BRIDGE_OTHER_BUTTON_X2;
+        else return FALSE;
+        *isDown = message == WM_XBUTTONDOWN || message == WM_XBUTTONDBLCLK ||
+            message == WM_NCXBUTTONDOWN || message == WM_NCXBUTTONDBLCLK;
+        return TRUE;
+    }
+    default:
+        return FALSE;
+    }
+}
+
+static DWORD BridgeRemainingGestureBudget(DWORD startTick)
+{
+    DWORD elapsed = GetTickCount() - startTick;
+    return elapsed >= BRIDGE_GESTURE_BUDGET_MS
+        ? 0
+        : BRIDGE_GESTURE_BUDGET_MS - elapsed;
+}
+
+static void BridgeRejectSequence(BRIDGE_SHARED *shared, DWORD sequence)
+{
+    if (shared == NULL || sequence == 0 || !BridgeTryLock(shared)) return;
+    BridgeStateReject(&shared->state, (LONG)sequence);
+    BridgeUnlock(shared);
+}
+
+static BOOL BridgeReleaseSourceCapture(
+    DWORD sourcePid,
+    DWORD sourceTid,
+    HWND sourceRoot,
+    BOOL sourceContext,
+    DWORD currentTid,
+    DWORD startTick,
+    LONG *failureDetail)
+{
+    HWND capture;
+    HWND captureRoot = NULL;
+    DWORD capturePid = 0;
+    DWORD captureTid = 0;
+
+    if (failureDetail != NULL) *failureDetail = 0;
+
+    if (sourceContext)
+    {
+        if (currentTid != sourceTid)
+        {
+            if (failureDetail != NULL) *failureDetail = BRIDGE_PROBE_CAPTURE_FAILURE_SOURCE_THREAD;
+            return FALSE;
+        }
+        capture = GetCapture();
+        if (capture == NULL) return TRUE;
+        if (!BridgeIsRootTarget(capture, &captureRoot, &capturePid, &captureTid) ||
+            capturePid != sourcePid || captureTid != sourceTid || captureRoot != sourceRoot)
+        {
+            if (failureDetail != NULL) *failureDetail = BRIDGE_PROBE_CAPTURE_FAILURE_SOURCE_WINDOW;
+            return FALSE;
+        }
+        if (BridgeRemainingGestureBudget(startTick) == 0 || !ReleaseCapture() || GetCapture() != NULL)
+        {
+            if (failureDetail != NULL) *failureDetail = BRIDGE_PROBE_CAPTURE_FAILURE_RELEASE;
+            return FALSE;
+        }
+        return TRUE;
+    }
+
+    {
+        GUITHREADINFO info;
+        DWORD_PTR cancelResult = 0;
+        DWORD remaining;
+
+        BridgeZeroMemory((volatile unsigned char *)&info, sizeof(info));
+        info.cbSize = (DWORD)sizeof(info);
+        if (!GetGUIThreadInfo(sourceTid, &info))
+        {
+            if (failureDetail != NULL) *failureDetail = BRIDGE_PROBE_CAPTURE_FAILURE_QUERY;
+            return FALSE;
+        }
+        capture = info.hwndCapture;
+        if (capture == NULL) return TRUE;
+        if (!BridgeIsRootTarget(capture, &captureRoot, &capturePid, &captureTid) ||
+            capturePid != sourcePid || captureTid != sourceTid || captureRoot != sourceRoot)
+        {
+            if (failureDetail != NULL) *failureDetail = BRIDGE_PROBE_CAPTURE_FAILURE_WINDOW;
+            return FALSE;
+        }
+        remaining = BridgeRemainingGestureBudget(startTick);
+        if (remaining == 0)
+        {
+            if (failureDetail != NULL) *failureDetail = BRIDGE_PROBE_CAPTURE_FAILURE_BUDGET;
+            return FALSE;
+        }
+        if (SendMessageTimeoutW(
+                capture,
+                WM_CANCELMODE,
+                0,
+                0,
+                SMTO_ABORTIFHUNG,
+                remaining,
+                &cancelResult) == 0)
+        {
+            if (failureDetail != NULL) *failureDetail = BRIDGE_PROBE_CAPTURE_FAILURE_CANCEL;
+            return FALSE;
+        }
+
+        BridgeZeroMemory((volatile unsigned char *)&info, sizeof(info));
+        info.cbSize = (DWORD)sizeof(info);
+        if (!GetGUIThreadInfo(sourceTid, &info))
+        {
+            if (failureDetail != NULL) *failureDetail = BRIDGE_PROBE_CAPTURE_FAILURE_RECHECK;
+            return FALSE;
+        }
+        if (info.hwndCapture != NULL)
+        {
+            if (failureDetail != NULL) *failureDetail = BRIDGE_PROBE_CAPTURE_FAILURE_REMAINS;
+            return FALSE;
+        }
+    }
+    return TRUE;
+}
+
 static BOOL BridgeBeginGesture(
     BRIDGE_SHARED *shared,
     DWORD sequence,
     DWORD sourcePid,
+    DWORD sourceTid,
     HWND sourceRoot,
-    HWND sourceForeground)
+    HWND sourceForeground,
+    BOOL sourceContext,
+    DWORD currentTid)
 {
     DWORD foregroundPid = 0;
     DWORD_PTR uiResult = 0;
@@ -324,14 +514,14 @@ static BOOL BridgeBeginGesture(
     HWND foreground;
     HWND owner;
     DWORD ownerPid;
-    HWND capture;
-    DWORD capturePid = 0;
-    DWORD captureTid;
+    DWORD remaining;
     BOOL accepted = FALSE;
     BOOL promoted = FALSE;
     LONG decision;
     LONG completedSequence = 0;
     DWORD tick;
+    DWORD startTick = GetTickCount();
+    LONG captureFailure = 0;
 
     if (shared == NULL || sequence == 0) return FALSE;
     owner = (HWND)(ULONG_PTR)shared->ownerHwnd;
@@ -342,35 +532,55 @@ static BOOL BridgeBeginGesture(
         foreground != sourceForeground)
     {
         BridgePostProbe(shared, BRIDGE_PROBE_SEND_FAILED, 1);
-        if (BridgeTryLock(shared))
-        {
-            BridgeStateReject(&shared->state, (LONG)sequence);
-            BridgeUnlock(shared);
-        }
+        BridgeRejectSequence(shared, sequence);
         return FALSE;
     }
 
-    AllowSetForegroundWindow(ownerPid);
-
-    /* GetCapture is per-thread; release only capture owned by this callback thread. */
-    capture = GetCapture();
-    if (capture != NULL)
+    if (sourceContext)
     {
-        captureTid = GetWindowThreadProcessId(capture, &capturePid);
-        if (captureTid == GetCurrentThreadId() && capturePid == sourcePid)
-        {
-            ReleaseCapture();
-        }
+        AllowSetForegroundWindow(ownerPid);
     }
 
-    sendResult = SendMessageTimeoutW(
-        owner,
-        BRIDGE_OWNER_MESSAGE,
-        (WPARAM)sequence,
-        (LPARAM)BRIDGE_OWNER_BEGIN,
-        SMTO_ABORTIFHUNG,
-        75,
-        &uiResult);
+    if (!BridgeReleaseSourceCapture(
+            sourcePid,
+            sourceTid,
+            sourceRoot,
+            sourceContext,
+            currentTid,
+            startTick,
+            &captureFailure))
+    {
+        BridgePostProbe(shared, BRIDGE_PROBE_CAPTURE_FAILED, captureFailure);
+        BridgeRejectSequence(shared, sequence);
+        return FALSE;
+    }
+
+    foreground = GetForegroundWindow();
+    foregroundPid = 0;
+    if (foreground == NULL || foreground != sourceForeground ||
+        GetWindowThreadProcessId(foreground, &foregroundPid) == 0 || foregroundPid != sourcePid)
+    {
+        BridgePostProbe(shared, BRIDGE_PROBE_SEND_FAILED, 4);
+        BridgeRejectSequence(shared, sequence);
+        return FALSE;
+    }
+
+    remaining = BridgeRemainingGestureBudget(startTick);
+    if (remaining == 0)
+    {
+        sendResult = 0;
+    }
+    else
+    {
+        sendResult = SendMessageTimeoutW(
+            owner,
+            BRIDGE_OWNER_MESSAGE,
+            (WPARAM)sequence,
+            (LPARAM)BRIDGE_OWNER_BEGIN,
+            SMTO_ABORTIFHUNG,
+            remaining,
+            &uiResult);
+    }
     if (sendResult != 0 && (uiResult == 1 || uiResult == 2)) accepted = TRUE;
 
     tick = GetTickCount();
@@ -394,12 +604,9 @@ static BOOL BridgeBeginGesture(
 
     if (!accepted)
     {
-        BridgePostProbe(shared, BRIDGE_PROBE_SEND_FAILED, sendResult == 0 ? 2 : 3);
-        if (BridgeTryLock(shared))
-        {
-            BridgeStateReject(&shared->state, (LONG)sequence);
-            BridgeUnlock(shared);
-        }
+        BridgePostProbe(shared, BRIDGE_PROBE_SEND_FAILED,
+            sendResult == 0 ? (remaining == 0 ? 5 : 2) : 3);
+        BridgeRejectSequence(shared, sequence);
         return FALSE;
     }
 
@@ -427,7 +634,6 @@ static BOOL BridgeBeginGesture(
     {
         BridgePostOwnerMessage(shared, (DWORD)completedSequence, BRIDGE_OWNER_COMPLETE);
     }
-    (void)sourceRoot;
     return TRUE;
 }
 
@@ -450,6 +656,7 @@ static LRESULT CALLBACK BridgeMouseProc(int code, WPARAM wParam, LPARAM lParam)
     LONG sequence = 0;
     LONG rejectionDetail = 0;
     BOOL targetMatches = FALSE;
+    BOOL sourceContext;
     BOOL beginAccepted;
     HWND sourceForeground = NULL;
     BOOL queuedRightDown = FALSE;
@@ -458,6 +665,8 @@ static LRESULT CALLBACK BridgeMouseProc(int code, WPARAM wParam, LPARAM lParam)
     BOOL candidateStarted = FALSE;
     BOOL activeCancelled = FALSE;
     BOOL probeLeft = FALSE;
+    BOOL otherButtonDown = FALSE;
+    LONG otherButton = 0;
 
     if (code < 0)
     {
@@ -496,6 +705,20 @@ static LRESULT CALLBACK BridgeMouseProc(int code, WPARAM wParam, LPARAM lParam)
         BRIDGE_PROBE_COUNT(nullMouse);
         return CallNextHookEx(NULL, code, wParam, lParam);
     }
+
+    if (BridgeGetOtherButtonChange((UINT)wParam, mouse, &otherButton, &otherButtonDown))
+    {
+        if (!BridgeTryLock(shared))
+        {
+            BRIDGE_PROBE_COUNT(lockFailure);
+            return CallNextHookEx(NULL, code, wParam, lParam);
+        }
+        if (otherButtonDown) shared->otherButtons |= otherButton;
+        else shared->otherButtons &= ~otherButton;
+        BridgeUnlock(shared);
+        return CallNextHookEx(NULL, code, wParam, lParam);
+    }
+
     tick = GetTickCount();
     ownerPid = (DWORD)shared->ownerPid;
     ownerRoot = (HWND)(ULONG_PTR)shared->ownerHwnd;
@@ -510,23 +733,28 @@ static LRESULT CALLBACK BridgeMouseProc(int code, WPARAM wParam, LPARAM lParam)
         return CallNextHookEx(NULL, code, wParam, lParam);
     }
     currentPid = GetCurrentProcessId();
+    currentTid = GetCurrentThreadId();
+    sourceContext = targetPid == currentPid && targetTid == currentTid;
     BRIDGE_PROBE_SET(lastTargetPid, targetPid);
     BRIDGE_PROBE_SET(lastTargetTid, targetTid);
     BRIDGE_PROBE_SET(lastCurrentPid, currentPid);
-    if (targetPid != currentPid)
-    {
-        BRIDGE_PROBE_SET(lastCurrentTid, 0);
-        BRIDGE_PROBE_COUNT(contextSkipped);
-        return CallNextHookEx(NULL, code, wParam, lParam);
-    }
-    currentTid = GetCurrentThreadId();
     BRIDGE_PROBE_SET(lastCurrentTid, currentTid);
-    if (targetTid != currentTid)
+    if (sourceContext)
+    {
+        BRIDGE_PROBE_COUNT(contextAccepted);
+    }
+    else
     {
         BRIDGE_PROBE_COUNT(contextSkipped);
+#if !defined(_WIN64)
         return CallNextHookEx(NULL, code, wParam, lParam);
+#else
+        if (currentPid != ownerPid || targetPid == ownerPid)
+        {
+            return CallNextHookEx(NULL, code, wParam, lParam);
+        }
+#endif
     }
-    BRIDGE_PROBE_COUNT(contextAccepted);
 
     if (wParam == WM_MOUSEMOVE || wParam == WM_NCMOUSEMOVE)
     {
@@ -594,6 +822,7 @@ static LRESULT CALLBACK BridgeMouseProc(int code, WPARAM wParam, LPARAM lParam)
         if (candidateStarted)
         {
             BRIDGE_PROBE_COUNT(candidate);
+            BridgePostProbe(shared, BRIDGE_PROBE_CONTEXT, sourceContext ? 1 : 2);
             BridgePostProbe(shared, BRIDGE_PROBE_RIGHT_SEEN, 0);
         }
         return CallNextHookEx(NULL, code, wParam, lParam);
@@ -635,11 +864,6 @@ static LRESULT CALLBACK BridgeMouseProc(int code, WPARAM wParam, LPARAM lParam)
         if (targetPid != ownerPid)
         {
             probeLeft = TRUE;
-            queuedRightDown = (GetKeyState(VK_RBUTTON) & 0x8000) != 0;
-            queuedOtherButtons =
-                (GetKeyState(VK_MBUTTON) & 0x8000) != 0 ||
-                (GetKeyState(VK_XBUTTON1) & 0x8000) != 0 ||
-                (GetKeyState(VK_XBUTTON2) & 0x8000) != 0;
             sourceForeground = GetForegroundWindow();
         }
         if (!BridgeTryLock(shared))
@@ -663,6 +887,11 @@ static LRESULT CALLBACK BridgeMouseProc(int code, WPARAM wParam, LPARAM lParam)
         else if (targetPid != ownerPid)
         {
             hadCandidate = shared->state.phase == BRIDGE_PHASE_CANDIDATE;
+            queuedRightDown = hadCandidate && shared->state.rightDownSeen &&
+                shared->state.targetRoot == (BRIDGE_U64)(ULONG_PTR)targetRoot &&
+                (DWORD)shared->state.targetPid == targetPid &&
+                (DWORD)shared->state.targetTid == targetTid;
+            queuedOtherButtons = shared->otherButtons != 0;
             if (hadCandidate)
             {
                 if (!queuedRightDown) rejectionDetail = 1;
@@ -709,7 +938,15 @@ static LRESULT CALLBACK BridgeMouseProc(int code, WPARAM wParam, LPARAM lParam)
         if (decision != BRIDGE_DECISION_BEGIN) return CallNextHookEx(NULL, code, wParam, lParam);
 
         BridgePostProbe(shared, BRIDGE_PROBE_LEFT_CANDIDATE, (LPARAM)sequence);
-        beginAccepted = BridgeBeginGesture(shared, (DWORD)sequence, targetPid, targetRoot, sourceForeground);
+        beginAccepted = BridgeBeginGesture(
+            shared,
+            (DWORD)sequence,
+            targetPid,
+            targetTid,
+            targetRoot,
+            sourceForeground,
+            sourceContext,
+            currentTid);
         if (beginAccepted) return 1;
         return CallNextHookEx(NULL, code, wParam, lParam);
     }
@@ -781,6 +1018,7 @@ BOOL __cdecl BridgeInstall(HWND owner, DWORD ownerPid)
         BridgeStateInit(&shared->state);
         shared->state.sequence = previousSequence;
     }
+    shared->otherButtons = BridgeReadOtherButtons();
 #else
     if ((DWORD)currentPid == ownerPid) return FALSE;
     mapping = OpenFileMappingW(FILE_MAP_READ | FILE_MAP_WRITE, FALSE, mapName);
@@ -859,6 +1097,7 @@ void __cdecl BridgeStop(void)
             shared->statusBits &= ~((LONG)BRIDGE_STATUS_HOOK64 |
                 (LONG)BRIDGE_STATUS_ENABLED | (LONG)BRIDGE_STATUS_FOREGROUND_PROMOTED);
             BridgeStateCancel(&shared->state);
+            shared->otherButtons = 0;
             BridgeUnlock(shared);
         }
         g_cfgOwnerPid = 0;

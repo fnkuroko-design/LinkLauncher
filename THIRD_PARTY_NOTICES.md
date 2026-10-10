@@ -3,8 +3,7 @@
 LinkLauncherの独自コードと独自アイコンは、同梱のLICENSEに記載したMITライセンスで公開します。
 現時点で追加のNuGetパッケージ・第三者画像・Webフォントは使用していません。
 
-入力仲介の `LinkLauncher.MouseHook.x64.dll`、`LinkLauncher.MouseHook.x86.dll`、
-`LinkLauncher.MouseHookHost.x86.exe` は本リポジトリの独自コードです。同じMITライセンスを適用します。
+入力仲介の `LinkLauncher.MouseHook.x64.dll` は本リポジトリの独自コードです。同じMITライセンスを適用します。
 Windows APIだけを使用し、VCランタイムは同梱しません。
 
 ## 実行基盤

@@ -63,6 +63,10 @@ input-dのChordReleaseChecksは1回実行した。12個のチェックが成功�
 - eのログにはC#の低レベルフックの左右DOWNがあり、nativeの候補成立・候補拒否・UI通知のstage記録は一件もない。nativeStatus=7を実際の仲介成功と混同しない。現行のstageはコールバック入口を記録していないため、未到達と入口後の早期returnはまだ区別できない。
 - 読み取り専用でDLLのPEセクションを確認した。両DLLの`.LLCFG`はREAD/WRITE/SHAREDで存在し、実行中の本体・補助DLLの同セクションにowner PID 3832とHWND 0x690D8Aを確認した。本体・補助・ExplorerのSessionIdは1、integrity RIDは0x2000（Medium）で一致した。ExplorerのExtensionPoint/Signature/ImageLoad mitigation flagsはそれぞれ0。この時点のExplorerのモジュール一覧にhook DLLはなかった。これらは入力対象PID/TIDの確定やフック未到達の断定にはならない。
 - 次のinput-fは入力方式を変える版ではなく、`BRIDGE_INPUT_PROBE`限定の共有カウンターで入口と早期returnを切り分ける診断試作。負のhook codeは即座に通し、観測のための入力生成・カーソル移動・ファイルI/O・同期UI送信をコールバックへ追加しない。正式配布物には診断カウンターとセクションを含めない。
+- input-f-entry-probeをソース`4f95266598ab382583ecc09a05b0004518e08e03`からpublishした。警告・エラー出力なし。両DLLの`.LLPRB`は132 bytesでREAD/WRITE/SHARED、依存はUSER32/KERNEL32のみ。7バイナリのハッシュとソースコピーを試作外側に記録した。状態遷移を変更していないため純状態試験は再実行していない。読み取りスクリプトの構文エラーは0。実行時の読み取りは起動後に別途確認した。
+- ユーザーがinput-eを終了した後、残存プロセスなしを確認し、rootがinput-fを記録付きで起動した。本体PID 3256、補助PID 9488、status=7。ユーザーデータの起動前後のSHA-256は一致した。通常のCodex/Chromeでの操作中に、共有取得・無効状態・target照会・lockの失敗は0だったが、対象PIDと実行PIDの不一致による`contextSkipped`が増えた。
+- ユーザーにデスクトップ空白へポインターを置くだけの確認を1回依頼した。クリック・右＋左は不要とした。直後のsnapshotは、対象Explorer PID 11528/TID 11532に対し、x64実行PID 3256・x86実行PID 9488、両方の`contextSkipped=3919`。x64のsource-context受付は2のまま、x86は0、DOWN・candidate・BEGIN・ACKは全て0だった。この観測では、installer側に届く正常な通知をPID/TID一致ガードで除外していたことが分かった。eの失敗したDOWNそのものの再記録ではないが、同じデスクトップ領域での経路を確認した。
+- fの記録先は`artifacts/previews/LinkLauncher-v0.1.2-dev.9-input-f-entry-probe/observations/20261011-004053-6c9e3c0612854d26b610b45e6cfa1561/`。`snapshot-after-desktop-pointer.json`を保持する。OSはAMD64、Explorer/Codex/Chrome/本体はネイティブ64bit、補助は32bitであり、ARM64との相違が原因ではない。
 
 ## 試作の比較と復元
 

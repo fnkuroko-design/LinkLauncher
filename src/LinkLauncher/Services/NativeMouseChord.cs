@@ -1,10 +1,7 @@
 using System;
 using System.ComponentModel;
-using System.Diagnostics;
-using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
-using System.Threading;
 
 namespace LinkLauncher.Services;
 
@@ -17,13 +14,11 @@ internal sealed class NativeMouseChord : IDisposable
     internal const int NotificationMessage = 0x8039;
     internal const int BeginNotification = 1;
     internal const int CompleteNotification = 2;
-    private const uint InstalledArchitectures = 3;
-    private const int WmQuit = 0x0012;
+    private const uint ReadyStatus = 5; // 64bit hook + enabled。異なるbitnessはinstaller側callbackで扱う。
 
     // Unhook直後も既存callbackが終了処理中である可能性があるため、DLLはプロセスの寿命まで保持します。
     private static Bindings? _bindings;
     private readonly Bindings _api;
-    private Process? _host;
     private bool _disposed;
 
     private NativeMouseChord(Bindings api) => _api = api;
@@ -46,33 +41,15 @@ internal sealed class NativeMouseChord : IDisposable
 
             string directory = AppContext.BaseDirectory;
             string library = Path.Combine(directory, "LinkLauncher.MouseHook.x64.dll");
-            string hostLibrary = Path.Combine(directory, "LinkLauncher.MouseHook.x86.dll");
-            string hostExecutable = Path.Combine(directory, "LinkLauncher.MouseHookHost.x86.exe");
-            foreach (string path in new[] { library, hostLibrary, hostExecutable })
-                if (!File.Exists(path)) throw new FileNotFoundException("入力仲介の補助ファイルがありません。", path);
+            if (!File.Exists(library)) throw new FileNotFoundException("入力仲介の補助ファイルがありません。", library);
 
             Bindings api = _bindings ??= new Bindings(library);
             created = new NativeMouseChord(api);
             if (api.Install(owner, (uint)Environment.ProcessId) == 0)
                 throw new Win32Exception(Marshal.GetLastWin32Error(), "64bit入力仲介を開始できませんでした。");
 
-            var start = new ProcessStartInfo(hostExecutable)
-            {
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                WorkingDirectory = directory
-            };
-            start.ArgumentList.Add(unchecked((ulong)owner.ToInt64()).ToString("X", CultureInfo.InvariantCulture));
-            start.ArgumentList.Add(Environment.ProcessId.ToString(CultureInfo.InvariantCulture));
-            created._host = Process.Start(start) ?? throw new InvalidOperationException("32bit入力仲介を開始できませんでした。");
-
-            var waiting = Stopwatch.StartNew();
-            while ((api.Status() & InstalledArchitectures) != InstalledArchitectures)
-            {
-                if (created._host.HasExited || waiting.ElapsedMilliseconds >= 750)
-                    throw new InvalidOperationException("32bit入力仲介の開始を確認できませんでした。");
-                Thread.Sleep(10);
-            }
+            if ((api.Status() & ReadyStatus) != ReadyStatus)
+                throw new InvalidOperationException("入力仲介の開始を確認できませんでした。");
 
             controller = created;
             return true;
@@ -92,25 +69,6 @@ internal sealed class NativeMouseChord : IDisposable
         if (_disposed) return;
         _disposed = true;
         try { _api.Stop(); } catch { }
-        if (_host is not null)
-        {
-            try
-            {
-                if (!_host.HasExited)
-                {
-                    // このインスタンスが起動した補助プロセスのスレッドだけに終了を通知します。
-                    foreach (ProcessThread thread in _host.Threads)
-                    {
-                        try { PostThreadMessage((uint)thread.Id, WmQuit, UIntPtr.Zero, IntPtr.Zero); }
-                        finally { thread.Dispose(); }
-                    }
-                    if (!_host.WaitForExit(500)) _host.Kill();
-                }
-            }
-            catch (InvalidOperationException) { }
-            catch (Win32Exception) { }
-            finally { _host.Dispose(); _host = null; }
-        }
     }
 
     [UnmanagedFunctionPointer(CallingConvention.Cdecl, SetLastError = true)]
@@ -148,7 +106,4 @@ internal sealed class NativeMouseChord : IDisposable
             Marshal.GetDelegateForFunctionPointer<T>(NativeLibrary.GetExport(library, name));
     }
 
-    [DllImport("user32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool PostThreadMessage(uint threadId, int message, UIntPtr wParam, IntPtr lParam);
 }
