@@ -1,5 +1,36 @@
 #include "BridgeState.h"
 
+void BridgeMenuGuardClear(BRIDGE_MENU_GUARD *guard)
+{
+    if (guard != 0) guard->valid = 0;
+}
+
+void BridgeMenuGuardArm(BRIDGE_MENU_GUARD *guard, BRIDGE_U64 root,
+    BRIDGE_U32 pid, BRIDGE_U32 tid, BRIDGE_I32 ownerShown, BRIDGE_U32 tick)
+{
+    if (guard == 0) return;
+    guard->valid = root != 0 && pid != 0 && tid != 0;
+    guard->targetRoot = root;
+    guard->targetPid = (BRIDGE_I32)pid;
+    guard->targetTid = (BRIDGE_I32)tid;
+    guard->ownerShown = ownerShown;
+    guard->startTick = tick;
+    guard->reserved = 0;
+}
+
+BRIDGE_I32 BridgeMenuGuardMatches(const BRIDGE_MENU_GUARD *guard,
+    BRIDGE_U64 root, BRIDGE_U32 pid, BRIDGE_U32 tid,
+    BRIDGE_I32 ownerVisible, BRIDGE_U32 tick)
+{
+    if (guard == 0 || !guard->valid || guard->targetRoot != root ||
+        (BRIDGE_U32)guard->targetPid != pid || (BRIDGE_U32)guard->targetTid != tid)
+        return 0;
+    /* A gesture that hides the launcher needs only a bounded cancellation.
+     * A shown launcher keeps its source guard until closed or new input. */
+    return guard->ownerShown ? ownerVisible :
+        (BRIDGE_U32)(tick - guard->startTick) < BRIDGE_WATCHDOG_MS;
+}
+
 static BRIDGE_I32 BridgeWithinAxis(BRIDGE_I32 a, BRIDGE_I32 b)
 {
     if (a >= b)

@@ -395,6 +395,23 @@ static LRESULT CALLBACK BridgeCallWndProc(int code, WPARAM wParam, LPARAM lParam
             break;
         }
 #endif
+        /* Standard keyboard context menus are a new user action too. */
+        if (event->message == WM_CONTEXTMENU && event->lParam == (LPARAM)-1)
+        {
+            HWND root = NULL;
+            DWORD pid = 0;
+            DWORD tid = 0;
+            shared = BridgeEnsureShared();
+            if (shared != NULL && BridgeIsRootTarget(event->hwnd, &root, &pid, &tid) &&
+                BridgeTryLock(shared))
+            {
+                if (shared->menuGuard.targetRoot == (BRIDGE_U64)(ULONG_PTR)root &&
+                    (DWORD)shared->menuGuard.targetPid == pid &&
+                    (DWORD)shared->menuGuard.targetTid == tid)
+                    BridgeMenuGuardClear(&shared->menuGuard);
+                BridgeUnlock(shared);
+            }
+        }
         if ((event->message == WM_ENTERMENULOOP && event->wParam != 0) ||
             event->message == WM_INITMENUPOPUP)
         {
@@ -402,7 +419,13 @@ static LRESULT CALLBACK BridgeCallWndProc(int code, WPARAM wParam, LPARAM lParam
             DWORD pid = 0;
             DWORD tid = 0;
             BOOL cancelMenu = FALSE;
+            BOOL ownerVisible;
+#if defined(BRIDGE_INPUT_PROBE)
+            BOOL probeMenu = FALSE;
+            DWORD detail = 0;
+#endif
             shared = BridgeEnsureShared();
+            ownerVisible = shared != NULL && IsWindowVisible((HWND)(ULONG_PTR)shared->ownerHwnd);
             if (shared != NULL &&
                 InterlockedCompareExchange(&shared->enabled, 0, 0) != 0 &&
                 BridgeIsRootTarget(event->hwnd, &root, &pid, &tid) &&
@@ -410,15 +433,28 @@ static LRESULT CALLBACK BridgeCallWndProc(int code, WPARAM wParam, LPARAM lParam
                 pid == GetCurrentProcessId() && tid == GetCurrentThreadId() &&
                 BridgeTryLock(shared))
             {
-                cancelMenu = shared->state.phase == BRIDGE_PHASE_ACTIVE &&
-                    shared->state.requestValid && shared->state.requestClaimed &&
-                    shared->state.pendingButtons != 0 &&
-                    shared->state.targetRoot == (BRIDGE_U64)(ULONG_PTR)root &&
-                    (DWORD)shared->state.targetPid == pid &&
-                    (DWORD)shared->state.targetTid == tid &&
-                    (DWORD)(GetTickCount() - shared->state.startTick) < BRIDGE_WATCHDOG_MS;
+                cancelMenu = BridgeMenuGuardMatches(&shared->menuGuard,
+                    (BRIDGE_U64)(ULONG_PTR)root, pid, tid, ownerVisible, GetTickCount());
+#if defined(BRIDGE_INPUT_PROBE)
+                if (shared->menuGuard.valid && (DWORD)shared->menuGuard.targetPid == pid)
+                {
+                    probeMenu = TRUE;
+                    detail = (cancelMenu ? 1UL : 0UL) |
+                        (ownerVisible ? 2UL : 0UL) |
+                        (shared->menuGuard.targetRoot == (BRIDGE_U64)(ULONG_PTR)root ? 4UL : 0UL) |
+                        ((DWORD)shared->menuGuard.targetTid == tid ? 8UL : 0UL);
+                }
+#endif
                 BridgeUnlock(shared);
             }
+#if defined(BRIDGE_INPUT_PROBE)
+            if (probeMenu)
+            {
+                BridgePostTrace(shared, 8, event->message, detail);
+                BridgePostTrace(shared, 9, event->message, (DWORD)(ULONG_PTR)root);
+                BridgePostTrace(shared, 10, event->message, tid);
+            }
+#endif
             if (cancelMenu)
             {
                 BOOL ended = EndMenu();
@@ -713,7 +749,9 @@ static BOOL BridgeBeginGesture(
         decision = BridgeStateAccept(&shared->state, (LONG)sequence, tick, &completedSequence);
         if (decision == BRIDGE_DECISION_BEGIN || decision == BRIDGE_DECISION_COMPLETE)
         {
-            /* Acceptance is now visible to all hook bitnesses. */
+            BridgeMenuGuardArm(&shared->menuGuard,
+                (BRIDGE_U64)(ULONG_PTR)sourceRoot, sourcePid, sourceTid,
+                uiResult == 1, tick);
         }
         else
         {
@@ -736,6 +774,8 @@ static BOOL BridgeBeginGesture(
 
     BRIDGE_PROBE_COUNT(ack);
     BridgePostProbe(shared, BRIDGE_PROBE_ACK, (LPARAM)uiResult);
+    BridgePostTrace(shared, 11, 0, (DWORD)(ULONG_PTR)sourceRoot);
+    BridgePostTrace(shared, 12, 0, sourceTid);
 
     if (uiResult == 1)
     {
@@ -1257,6 +1297,7 @@ void __cdecl BridgeStop(void)
                 (LONG)BRIDGE_STATUS_MENU_HOOK |
                 (LONG)BRIDGE_STATUS_ENABLED | (LONG)BRIDGE_STATUS_FOREGROUND_PROMOTED);
             BridgeStateCancel(&shared->state);
+            BridgeMenuGuardClear(&shared->menuGuard);
             shared->otherButtons = 0;
             BridgeUnlock(shared);
         }
@@ -1299,6 +1340,14 @@ UINT __cdecl BridgePendingButtons(void)
     pending = (UINT)shared->state.pendingButtons;
     BridgeUnlock(shared);
     return pending;
+}
+
+void __cdecl BridgeClearMenuGuard(void)
+{
+    BRIDGE_SHARED *shared = BridgeEnsureShared();
+    if (shared == NULL || !BridgeTryLock(shared)) return;
+    BridgeMenuGuardClear(&shared->menuGuard);
+    BridgeUnlock(shared);
 }
 
 UINT __cdecl BridgeSequence(void)

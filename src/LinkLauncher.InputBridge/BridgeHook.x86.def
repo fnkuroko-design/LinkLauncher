@@ -7,3 +7,4 @@ EXPORTS
     BridgeStatus
     BridgeHasCandidate
     BridgeTakeRequest
+    BridgeClearMenuGuard

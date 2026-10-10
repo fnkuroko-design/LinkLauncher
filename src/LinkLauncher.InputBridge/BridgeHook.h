@@ -5,7 +5,7 @@
 #include "BridgeState.h"
 
 #define BRIDGE_SHARED_MAGIC 0x434D4C4CUL /* LLMC */
-#define BRIDGE_SHARED_VERSION 2UL
+#define BRIDGE_SHARED_VERSION 3UL
 #define BRIDGE_OWNER_MESSAGE (WM_APP + 0x39)
 #define BRIDGE_OWNER_BEGIN 1
 #define BRIDGE_OWNER_COMPLETE 2
@@ -30,9 +30,10 @@ typedef struct BRIDGE_SHARED
     volatile LONG otherButtons;
     ULONGLONG ownerHwnd;
     BRIDGE_STATE state;
+    BRIDGE_MENU_GUARD menuGuard;
 } BRIDGE_SHARED;
 #pragma pack(pop)
-typedef char BRIDGE_SHARED_SIZE_CHECK[(sizeof(BRIDGE_SHARED) == 104) ? 1 : -1];
+typedef char BRIDGE_SHARED_SIZE_CHECK[(sizeof(BRIDGE_SHARED) == 136) ? 1 : -1];
 
 /* These names are exported through the architecture-specific .def files. */
 BOOL __cdecl BridgeInstall(HWND owner, DWORD ownerPid);
@@ -42,6 +43,7 @@ UINT __cdecl BridgeSequence(void);
 UINT __cdecl BridgeStatus(void);
 UINT __cdecl BridgeHasCandidate(void);
 BOOL __cdecl BridgeTakeRequest(UINT sequence);
+void __cdecl BridgeClearMenuGuard(void);
 
 /* Used as the x86 no-CRT executable entry point. */
 void __cdecl BridgeHostEntry(void);

@@ -198,10 +198,69 @@ static int CheckWatchdogAndSequenceWrap(void)
     return 1;
 }
 
+static int CheckMenuAfterButtonRelease(void)
+{
+    BRIDGE_STATE state;
+    BRIDGE_MENU_GUARD guard = { 0 };
+    BRIDGE_I32 superseded = 0;
+    BRIDGE_I32 completed = 0;
+    BridgeStateInit(&state);
+    BridgeStateOnRightDown(&state, 0x800, 108, 208, 10, 10, 0, &superseded);
+    BridgeStateOnLeftDown(&state, 0x800, 108, 208, 10, 10, 1, 0, 1);
+    BridgeStateTakeRequest(&state, 1);
+    BridgeStateAccept(&state, 1, 2, &completed);
+    BridgeMenuGuardArm(&guard, 0x800, 108, 208, 1, 2);
+    BridgeStateOnUp(&state, BRIDGE_BUTTON_LEFT, 1, 3, &completed);
+    BridgeStateOnUp(&state, BRIDGE_BUTTON_RIGHT, 1, 4, &completed);
+    CHECK_VALUE("physical session ended independently", state.pendingButtons, 0);
+    CHECK_VALUE("delayed source menu still guarded", BridgeMenuGuardMatches(&guard,
+        0x800, 108, 208, 1, 10000), 1);
+    BridgeMenuGuardClear(&guard);
+    CHECK_VALUE("next user action restores source menus", BridgeMenuGuardMatches(&guard,
+        0x800, 108, 208, 1, 10001), 0);
+    return 1;
+}
+
+static int CheckMenuSourceAndVisibilityBoundary(void)
+{
+    BRIDGE_MENU_GUARD guard = { 0 };
+    BridgeMenuGuardArm(&guard, 0x900, 109, 209, 1, 0);
+    CHECK_VALUE("other source window unaffected", BridgeMenuGuardMatches(&guard,
+        0x901, 109, 209, 1, 1), 0);
+    CHECK_VALUE("other process unaffected", BridgeMenuGuardMatches(&guard,
+        0x900, 110, 209, 1, 1), 0);
+    CHECK_VALUE("other thread unaffected", BridgeMenuGuardMatches(&guard,
+        0x900, 109, 210, 1, 1), 0);
+    CHECK_VALUE("hidden launcher no longer guards", BridgeMenuGuardMatches(&guard,
+        0x900, 109, 209, 0, 1), 0);
+    BridgeMenuGuardClear(&guard);
+    CHECK_VALUE("reopening does not restore cleared guard", BridgeMenuGuardMatches(&guard,
+        0x900, 109, 209, 1, 2), 0);
+    return 1;
+}
+
+static int CheckMenuHideGestureAndRearm(void)
+{
+    BRIDGE_MENU_GUARD guard = { 0 };
+    BridgeMenuGuardArm(&guard, 0xA00, 110, 210, 0, 0xFFFFFFF0UL);
+    CHECK_VALUE("hide gesture cancels immediate menu across clock wrap", BridgeMenuGuardMatches(&guard,
+        0xA00, 110, 210, 0, 0x10UL), 1);
+    CHECK_VALUE("hide gesture cancellation expires", BridgeMenuGuardMatches(&guard,
+        0xA00, 110, 210, 0, 0x7C0UL), 0);
+    BridgeMenuGuardArm(&guard, 0xB00, 111, 211, 1, 3000);
+    CHECK_VALUE("old gesture source no longer guarded", BridgeMenuGuardMatches(&guard,
+        0xA00, 110, 210, 1, 3001), 0);
+    CHECK_VALUE("new accepted source guarded", BridgeMenuGuardMatches(&guard,
+        0xB00, 111, 211, 1, 3001), 1);
+    BridgeMenuGuardArm(&guard, 0, 111, 211, 1, 3002);
+    CHECK_VALUE("invalid source cannot arm cancellation", guard.valid, 0);
+    return 1;
+}
+
 int main(void)
 {
     int passed = 0;
-    int total = 7;
+    int total = 10;
     passed += CheckNormalChordLeftUpFirst();
     passed += CheckNormalChordRightUpFirst();
     passed += CheckEarlyUpsBeforeAcknowledgement();
@@ -209,6 +268,9 @@ int main(void)
     passed += CheckMovementRadiusAndTargetGuard();
     passed += CheckRepressAndRedirectedRelease();
     passed += CheckWatchdogAndSequenceWrap();
+    passed += CheckMenuAfterButtonRelease();
+    passed += CheckMenuSourceAndVisibilityBoundary();
+    passed += CheckMenuHideGestureAndRearm();
     printf("Bridge state checks: %d/%d passed\n", passed, total);
     return passed == total ? 0 : 1;
 }

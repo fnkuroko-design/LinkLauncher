@@ -64,6 +64,11 @@ internal sealed class NativeMouseChord : IDisposable
 
     internal bool TryTakeRequest(uint sequence) => !_disposed && _api.TakeRequest(sequence) != 0;
 
+    internal void ClearMenuGuard()
+    {
+        if (!_disposed) _api.ClearMenuGuard();
+    }
+
     public void Dispose()
     {
         if (_disposed) return;
@@ -84,6 +89,7 @@ internal sealed class NativeMouseChord : IDisposable
     {
         internal readonly InstallFunction Install;
         internal readonly StopFunction Stop;
+        internal readonly StopFunction ClearMenuGuard;
         internal readonly ReadFunction PendingButtons;
         internal readonly ReadFunction Sequence;
         internal readonly ReadFunction Status;
@@ -95,6 +101,7 @@ internal sealed class NativeMouseChord : IDisposable
             IntPtr library = NativeLibrary.Load(path);
             Install = Export<InstallFunction>(library, "BridgeInstall");
             Stop = Export<StopFunction>(library, "BridgeStop");
+            ClearMenuGuard = Export<StopFunction>(library, "BridgeClearMenuGuard");
             PendingButtons = Export<ReadFunction>(library, "BridgePendingButtons");
             Sequence = Export<ReadFunction>(library, "BridgeSequence");
             Status = Export<ReadFunction>(library, "BridgeStatus");

@@ -137,6 +137,27 @@ jでは操作取消しに加え、WH_CALLWNDPROCで受理済みの呼び出し�
 
 EndMenuは呼んだスレッドのactive menuを終了するAPIであり、元アプリの処理を全般的に巻き戻す機能ではない。独自描画メニュー・保護されたアプリ・installer側にしか通知が来ない場合には同じ保証をしない。正式版では順序観測・カウンター・ログを除去し、必要な標準メニュー終了の処理を残す。
 
+## 解放後のメニューと最初の通常クリック（input-k）
+
+input-jのユーザー確認ではデスクトップの最初の呼び出しはランチャーだけを表示し、解放後の左クリックも使えた。一方、リンク以外のボタンは最初のクリックが効かず、タスクバーではランチャーと元メニューが両方出た。再確認でメニューの見た目の表示は左押下の瞬間ではなく、両ボタンを離してから少し動かした時点と報告された。既存の3秒・同一TIDの順序観測だけでは、この実操作とメニュー通知の一対一の対応は確定していない。
+
+kでは、ウィンドウ宛てのUPを管理するBRIDGE_STATEとは別に、受理済みの元root/PID/TIDをBRIDGE_MENU_GUARDへ保持する。UI ACKとBridgeStateAcceptが成立した場合だけ設定する。ランチャーを表示した呼び出しは、解放やポインター移動でこの情報を失わない。次の物理ボタンDOWN・ホイール、ランチャー内のキー入力、登録ホットキー、ランチャーを隠す操作、停止で消去する。標準のキーボード由来WM_CONTEXTMENU（lParam=-1）も消去対象にする。呼び出しによってランチャーを隠した場合に限り、開始から2秒以内の取消しとする。別ウィンドウ・別PID/TID・ランチャー自身のメニューには適用しない。
+
+この情報は物理ボタンの押下状態ではなく、物理入力やUPを保留・再送・注入しない。WH_CALLWNDPROCは通知をそのまま次へ渡し、照合したsourceスレッドでのみEndMenuを呼ぶ。独自描画メニュー、別スレッド・別rootへ委譲されたメニューは未対応の可能性があり、タスクバーを特別扱いして照合を緩めない。共有layoutはversion 3 / 136 bytesへ更新し、bitness間の固定幅と8-byte alignmentを維持する。
+
+最初のボタンについては、native pendingが残っている間のLL早期returnより前に、新しいDOWNによる古いActivationCompletionの取消しを移す。新しいDOWNは外側クリックの判定など通常処理にも進める。旧nativeセッションが次のLEFTDOWNで完了しても、旧検索欄フォーカスの完了callbackを実行しない。ButtonBaseがフォーカス喪失でIsPressed/captureを取り消す実装と症状は整合するが、改善は手動確認前に断定しない。
+
+試作限定でメニュー判定のkind 8（bit 0:対象、1:本体表示、2:root一致、3:TID一致）、9（通知側root）、10（通知側TID）、11/12（受理したsource root/TID）を記録する。診断のPostMessageはstate lock解放後に実行する。正式配布から観測コードとログを除去する。
+
+### タスクバーの公式仕様の調査（2026-10-11）
+
+Microsoftの資料には、アプリアイコンの右クリックでジャンプリストを開くこと、Shift＋右クリックでウィンドウメニューを開くこと、タスクバー空白の右クリックから設定を開くことが記載されている。一方、調べた公式資料には「右保持→左クリック→両解放後の移動」で表示する順序や内部のスレッド・root・Win32 menu APIの保証は見つからなかった。一般のDefWindowProcが右UPでWM_CONTEXTMENUを作る仕様を、タスクバー内部の仕様と同一視しない。Q&Aの投稿を公式契約の証拠に採用しない。
+
+- [Windowsのタスクバー操作](https://support.microsoft.com/en-us/windows/keyboard-shortcuts-in-windows-dcc61a57-8ff0-cffe-9796-cb9706c75eec)
+- [ジャンプリスト](https://learn.microsoft.com/en-us/windows/apps/develop/windows-integration/jump-list)
+- [タスクバーのカスタマイズ](https://support.microsoft.com/en-au/windows/experience/personalization/customize-the-taskbar-in-windows)
+- [WPF ButtonBaseの公式ソース](https://github.com/dotnet/wpf/blob/main/src/Microsoft.DotNet.Wpf/src/PresentationFramework/System/Windows/Controls/Primitives/ButtonBase.cs)
+
 ## 一次資料
 
 - [LowLevelMouseProc](https://learn.microsoft.com/en-us/windows/win32/winmsg/lowlevelmouseproc): 次のフックへの受け渡しと抑止。

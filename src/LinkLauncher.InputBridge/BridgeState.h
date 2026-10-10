@@ -47,6 +47,26 @@ typedef struct BRIDGE_STATE
     BRIDGE_U64 targetRoot;
 } BRIDGE_STATE;
 
+/* Menu cancellation outlives window-addressed button UP bookkeeping.
+ * It never owns or suppresses physical input; the next user action clears it. */
+typedef struct BRIDGE_MENU_GUARD
+{
+    BRIDGE_I32 valid;
+    BRIDGE_I32 targetPid;
+    BRIDGE_I32 targetTid;
+    BRIDGE_I32 ownerShown;
+    BRIDGE_U64 targetRoot;
+    BRIDGE_U32 startTick;
+    BRIDGE_I32 reserved;
+} BRIDGE_MENU_GUARD;
+
+void BridgeMenuGuardClear(BRIDGE_MENU_GUARD *guard);
+void BridgeMenuGuardArm(BRIDGE_MENU_GUARD *guard, BRIDGE_U64 root,
+    BRIDGE_U32 pid, BRIDGE_U32 tid, BRIDGE_I32 ownerShown, BRIDGE_U32 tick);
+BRIDGE_I32 BridgeMenuGuardMatches(const BRIDGE_MENU_GUARD *guard,
+    BRIDGE_U64 root, BRIDGE_U32 pid, BRIDGE_U32 tid,
+    BRIDGE_I32 ownerVisible, BRIDGE_U32 tick);
+
 void BridgeStateInit(BRIDGE_STATE *state);
 void BridgeStateCancel(BRIDGE_STATE *state);
 BRIDGE_I32 BridgeStateOnRightDown(

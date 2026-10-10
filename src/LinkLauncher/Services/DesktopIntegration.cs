@@ -195,6 +195,8 @@ public sealed class DesktopIntegration : IDisposable
 
         _window.SourceInitialized += OnSourceInitialized;
         _window.Closed += OnWindowClosed;
+        _window.IsVisibleChanged += OnLauncherVisibilityChanged;
+        _window.PreviewKeyDown += OnLauncherKeyDown;
 
         if (new WindowInteropHelper(_window).Handle != IntPtr.Zero)
         {
@@ -392,6 +394,8 @@ public sealed class DesktopIntegration : IDisposable
         _nativeMouseChord = null;
         _window.SourceInitialized -= OnSourceInitialized;
         _window.Closed -= OnWindowClosed;
+        _window.IsVisibleChanged -= OnLauncherVisibilityChanged;
+        _window.PreviewKeyDown -= OnLauncherKeyDown;
 
         if (_source != null)
         {
@@ -561,6 +565,8 @@ public sealed class DesktopIntegration : IDisposable
             if (_registeredHotkeys.ContainsKey(id))
             {
                 handled = true;
+                _nativeMouseChord?.ClearMenuGuard();
+                CancelMouseActivationCompletion();
                 CancelDesktopDoubleClick();
                 QueueUiAction(_toggle);
             }
@@ -623,9 +629,21 @@ public sealed class DesktopIntegration : IDisposable
                 return CallNextHookSafely(code, wParam, lParam);
             }
 
+            bool freshButtonDown = IsButtonDownMessage(message);
+            if (freshButtonDown)
+            {
+#if INPUT_PROBE
+                if (_mouseActivationCompletion.IsPending || _mouseActivationCallbackQueued)
+                    ChordInputProbe.Record($"activation followup cancelled=fresh-button nativeActive={_nativeMouseChord?.IsGestureActive}");
+#endif
+                CancelMouseActivationCompletion();
+            }
+            if (freshButtonDown || message is WmMouseWheel or WmMouseHWheel)
+                _nativeMouseChord?.ClearMenuGuard();
+
             // 右＋左は通常のWH_MOUSEでウィンドウ宛ての通知だけを仲介する。
             // Windowsの入力列とグローバルボタン状態を更新するLL入力はすべて通す。
-            if (_nativeMouseChord?.IsGestureActive == true)
+            if (_nativeMouseChord?.IsGestureActive == true && !freshButtonDown)
                 return CallNextHookSafely(code, wParam, lParam);
 
             if (TryConsumeSuppressedUp(message, mouse.MouseData))
@@ -653,9 +671,6 @@ public sealed class DesktopIntegration : IDisposable
                 TryFinishDisposedMouseHook();
                 return CallNextHookSafely(code, wParam, lParam);
             }
-
-            // A fresh button press is a new user action, not part of the call gesture.
-            if (IsButtonDownMessage(message)) CancelMouseActivationCompletion();
 
             if (_mousePattern == MouseActivationPattern.DesktopDoubleClick)
                 ObserveDesktopDoubleClick(message, mouse);
@@ -1059,6 +1074,10 @@ public sealed class DesktopIntegration : IDisposable
         {
             return _mouseHook != IntPtr.Zero;
         }
+
+        if (_nativeMouseChord is not null &&
+            (IsButtonDownMessage(message) || message is WmMouseWheel or WmMouseHWheel))
+            return true;
 
         if (message == WmMouseMove)
         {
@@ -1556,6 +1575,17 @@ public sealed class DesktopIntegration : IDisposable
             _mouseActivationCallbackQueued = false;
             completion();
         });
+    }
+
+    private void OnLauncherVisibilityChanged(object sender, DependencyPropertyChangedEventArgs args)
+    {
+        if (!_window.IsVisible) _nativeMouseChord?.ClearMenuGuard();
+    }
+
+    private void OnLauncherKeyDown(object sender, System.Windows.Input.KeyEventArgs args)
+    {
+        _nativeMouseChord?.ClearMenuGuard();
+        CancelMouseActivationCompletion();
     }
 
     private void CancelMouseActivationCompletion()
