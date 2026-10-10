@@ -21,7 +21,7 @@ dev.8常駐中に、デスクトップ空白でユーザーが右＋左を操作
 | input-aのChordReleaseChecks | 10/10 PASS | 初期実装の代替APIによる解放順序・重複・開始失敗・喪失・timeout・破棄・再入・capture要求中のforeground変更 |
 | input-dのChordReleaseChecks | 12ケース成功 | native DOWN受領後の開始、非候補時のactivate拒否、解放順序・再押下・重複・失敗・喪失・timeout・破棄・再入。純fakeのみ |
 | input-dのRelease / FDD publish | 成功、警告・エラー出力なし | 記録用シンボルを付けた試作アプリのコンパイル |
-| input-eのRelease / FDD publish | 最終ビルド成功、警告・エラー出力なし | C#本体、WinAPI専用x64/x86 DLL、x86補助EXE。実起動は未確認 |
+| input-eのRelease / FDD publish | 最終ビルド成功、警告・エラー出力なし | C#本体、WinAPI専用x64/x86 DLL、x86補助EXE。実起動は下記の記録を参照 |
 | input-eのBridgeStateChecks | 7/7成功、1回実行 | 純状態遷移。解放順序・長押し後のUP・ACK前UP・候補拒否・移動半径・target照合・再押下・redirect・世代wrap |
 | input-eの補助モジュール依存 | USER32.dll / KERNEL32.dllのみ | 3個ともdumpbinでimport確認、VCランタイム依存なし |
 | MouseChecks | 9/9 PASS | 通常の右押下・解放と移動時の候補解除、既存ホイール方式 |
@@ -57,6 +57,8 @@ input-dのChordReleaseChecksは1回実行した。12個のチェックが成功�
 - dのログは2回とも候補・対象照合・受け窓の準備がtrueだったが、受け窓のWM_MOUSEACTIVATE/WM_LBUTTONDOWNは記録されず、WaitingForNativeDownのまま準備タイマーで中断した。元の物理LEFTDOWNを通す途中で窓を表示する方法では、この再現の配送先は切り替わらなかったと推定する。未達をtimestamp不一致・capture取得失敗と混同しない。input-dも不合格で、正式配布には使わない。
 - input-e-native-probe: `artifacts/previews/LinkLauncher-v0.1.2-dev.9-input-e-native-probe/LinkLauncher/`に7個の試作バイナリをpublishした。3個の補助バイナリ合計は22,528 bytes。ソース・バイナリのSHA-256とソースコピーを試作フォルダーの外側へ保持する。ビルド中にパス引数・ハッシュ取得・子プロセス待機・共有構造体のalignment・CRTを使わないコピー処理・x86 export/entryを修正した。最終ビルドが成功するまでの失敗は実機検証に数えない。
 - input-eの実機確認は未実施。WH_MOUSEの配送、元アプリでのcapture解除、UI ACKの時間関係は純状態試験の対象外。まだ修正完了・正式配布とは扱わない。
+- 2026-10-11: ユーザーがinput-dを終了した連絡後、残存する本体・補助プロセスがないことを確認した。input-eの7バイナリのSHA-256が`build-info.json`と一致した後、rootが記録設定付き`--background`で起動した。本体PID 3832、x86補助PID 10216（親3832）、両EXEの試作パスを確認した。起動ログは`nativeStatus=7`で、x64/x86フック登録と有効化を確認した。これは登録・起動の証拠であり、実際の入力配送や呼び出し成功の証拠ではない。
+- この起動の記録先は`artifacts/previews/LinkLauncher-v0.1.2-dev.9-input-e-native-probe/observations/20261011-002431-4b4f3fe9015d41e38462f01d008d64e1/`。`launch-info.json`に起動パス・PID・ソースコミットを保存した。`library.json`のSHA-256は起動前後で一致し、設定保存・スタートアップ登録変更・入力生成・カーソル自動移動は行っていない。デスクトップ空白での2回の手動呼び出し結果を待っている。
 
 ## 試作の比較と復元
 
