@@ -208,6 +208,10 @@ input-dのChordReleaseChecksは1回実行した。12個のチェックが成功�
 - 保存したinput-oのログは22件のBEGIN/表示成立、stage 30/32失敗なし。focus resultは31が5件、27が7件で、失敗は元画面の活性化後に本体のforeground一致を確認できない段階へ移っていた。APIの戻り値を記録しておらず、拒否理由と非同期復帰の有無は未確定。各seqと操作場所の対応も断定しない。ログ保存コピーと報告JSONを起動時observationsへ追加保持した。
 - input-pはBridgeHook.cのみの機能変更。受理済みメニューの前面往復中の既存WM_NULLに限定し、照合した実foreground sourceスレッドからownerPIDへ前面化権限を渡す。応答待ち終了で一時要求をatomic CASにより解除する。通常入力/座標/ボタン状態/WPF/純状態は変更せず、診断として元スレッドの権限付与結果と復路APIの戻り値を追加する。拒否の万能な解消は保証しない。
 
+- input-pの最初のビルドでは、歴史的なx86対象からx64専用ボタン照会関数を参照したためコンパイルエラーとなった。機能を実際に使うx64 hookへ条件分岐を限定し、ソース`f449298fb8e6c659c6ebecada79545425b86ad46`から再publishが成功した。再試行は警告・エラーなし。最初のpublish.logも保持し、失敗したビルドを成功とは記録しない。
+- 新試作は`artifacts/previews/LinkLauncher-v0.1.2-dev.9-input-p-source-return-grant-probe/`。アプリ内5バイナリのみ、x64 DLLは18,432 bytes。20ソースのコピーとSHA-256、本体5バイナリのSHA-256を外側へ保持した。純状態に変更がなく13ケースは再実行していない。source threadでの権限付与はx64 source-contextに限り、installer側callbackでは実行しない。両bitness全アプリの実機合格を主張しない。
+- 最後にinput-o PID 8324の単独常駐を確認したためinput-pは未起動。userのトレイ終了連絡後に残存なしとバイナリ一致を確認してpを記録付きで起動する。設定・データ・スタートアップを変更していない。旧dev.8 ZIPのSHA-256は従前と一致。強制停止・入力生成・カーソル操作・Computer Use・正式ZIP・GitHub公開は行っていない。受入未達のまま手動比較待ち。
+
 ## 試作の比較と復元
 
 2版の同時起動は単一起動制御でできない。旧dev.8をトレイから終了し、dev.9の試作用EXEを起動する。比較中は設定の保存を行わず、スタートアップ登録先を変更しない。元へ戻す場合はdev.9をトレイから終了し、保持した `artifacts/releases/LinkLauncher-v0.1.2-dev.8-win-x64/LinkLauncher/LinkLauncher.exe` を起動する。
