@@ -18,6 +18,33 @@
     <Copyright>Copyright (c) 2026 LinkLauncher contributors</Copyright>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets/LinkLauncher.ico</ApplicationIcon>
+    <InputBridgeOutputDirectory>$(BaseIntermediateOutputPath)$(Configuration)\$(TargetFramework)\$(RuntimeIdentifier)\InputBridge\</InputBridgeOutputDirectory>
+    <InputProbe Condition="'$(InputProbe)' == ''">false</InputProbe>
+    <DefineConstants Condition="'$(InputProbe)' == 'true'">$(DefineConstants);INPUT_PROBE</DefineConstants>
+    <NativeInputProbeArgument Condition="'$(InputProbe)' == 'true'">-InputProbe</NativeInputProbeArgument>
   </PropertyGroup>
-  <ItemGroup><Resource Include="Assets/LinkLauncher.ico" /></ItemGroup>
+  <ItemGroup>
+    <Resource Include="Assets/LinkLauncher.ico" />
+    <!-- 不成立だった受け窓方式は純fake試験用にソースを保持し、本体には含めない。 -->
+    <Compile Remove="Services/ChordReleaseReceiver.cs" />
+    <None Include="$(InputBridgeOutputDirectory)LinkLauncher.MouseHook.x64.dll"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest"
+          Link="LinkLauncher.MouseHook.x64.dll"
+          TargetPath="LinkLauncher.MouseHook.x64.dll" />
+    <None Include="$(InputBridgeOutputDirectory)LinkLauncher.MouseHook.x86.dll"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest"
+          Link="LinkLauncher.MouseHook.x86.dll"
+          TargetPath="LinkLauncher.MouseHook.x86.dll" />
+    <None Include="$(InputBridgeOutputDirectory)LinkLauncher.MouseHookHost.x86.exe"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest"
+          Link="LinkLauncher.MouseHookHost.x86.exe"
+          TargetPath="LinkLauncher.MouseHookHost.x86.exe" />
+  </ItemGroup>
+
+  <Target Name="BuildInputBridge" BeforeTargets="PrepareForBuild" Condition="'$(DesignTimeBuild)' != 'true'">
+    <Exec Command="powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\..\..\scripts\Build-InputBridge.ps1&quot; -OutputDirectory &quot;$(MSBuildProjectDirectory)\$(InputBridgeOutputDirectory).&quot; $(NativeInputProbeArgument)" />
+  </Target>
 </Project>

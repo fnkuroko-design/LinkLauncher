@@ -12,19 +12,26 @@ dev.8常駐中に、デスクトップ空白でユーザーが右＋左を操作
 
 ## 変更と自動確認
 
-通常の右DOWN・MOVE・UPはそのまま通す。成立した右＋左では前面化とキャプチャを確認した自前の受け取り窓に解放を届け、Windowsへの右UP・左UPを止めない。外部WM_CANCELMODE通知は廃止する。
+通常の右DOWN・MOVE・UPはそのまま通す。input-a〜dの受け窓方式は実機で不合格だった。現在は通常のWH_MOUSEによる後段の通知処理を試作している。Windowsへの物理DOWN/UPを低レベルフックで止めず、外部WM_CANCELMODE通知は廃止する。以下は過去の試作の自動確認であり、新方式の実機成功を示さない。
 
 | 確認 | 結果 | 確認範囲 |
 | --- | --- | --- |
-| Releaseビルド | 警告・エラー0 | WPFアプリのコンパイル |
+| input-aのReleaseビルド | 警告・エラー0 | 初期実装のWPFアプリのコンパイル |
 | MouseCancellationChecks | 13/13 PASS | 代替APIによる対象・PID・スレッド・capture照合 |
-| ChordReleaseChecks | 10/10 PASS | 代替APIによる解放順序・重複・開始失敗・喪失・timeout・破棄・再入・capture要求中のforeground変更 |
+| input-aのChordReleaseChecks | 10/10 PASS | 初期実装の代替APIによる解放順序・重複・開始失敗・喪失・timeout・破棄・再入・capture要求中のforeground変更 |
+| input-dのChordReleaseChecks | 12ケース成功 | native DOWN受領後の開始、非候補時のactivate拒否、解放順序・再押下・重複・失敗・喪失・timeout・破棄・再入。純fakeのみ |
+| input-dのRelease / FDD publish | 成功、警告・エラー出力なし | 記録用シンボルを付けた試作アプリのコンパイル |
+| input-eのRelease / FDD publish | 最終ビルド成功、警告・エラー出力なし | C#本体、WinAPI専用x64/x86 DLL、x86補助EXE。実起動は未確認 |
+| input-eのBridgeStateChecks | 7/7成功、1回実行 | 純状態遷移。解放順序・長押し後のUP・ACK前UP・候補拒否・移動半径・target照合・再押下・redirect・世代wrap |
+| input-eの補助モジュール依存 | USER32.dll / KERNEL32.dllのみ | 3個ともdumpbinでimport確認、VCランタイム依存なし |
 | MouseChecks | 9/9 PASS | 通常の右押下・解放と移動時の候補解除、既存ホイール方式 |
 | ActivationCompletionChecks | 4/4 PASS | 解放前後の表示完了通知とキャンセル |
 
 試験は物理入力を生成しない。模擬APIの成功は実Windowsのforeground/captureや他アプリの改善を証明しない。PDF手書き・Codexのソース変更やアプリごとの例外設定は行っていない。
 
-読み取りレビューで、capture取得後にもforegroundを再照合する条件を追加した。元アプリで始まった右押下の後続UPの配送と、ランチャー本体の表示中のcapture維持は実機確認が必要である。capture喪失や2秒の安全タイマーによる中断では、Windowsの解放を通すことを優先するため、その後のメニュー抑止を保証しない。呼び出し途中の外部通知は待たないが、native前面化・capture操作は成立時のフック内で行うため、実機での呼び出しの反応も確認する。
+input-dのChordReleaseChecksは1回実行した。12個のチェックが成功したが、末尾の表示は旧分母を使って`PASS 12/11`だったため、表示のみ`PASS 12/12`へ修正した。表示修正後の再実行は行っていない。
+
+読み取りレビューで、capture取得後にもforegroundを再照合する条件を追加した。元アプリで始まった右押下の後続UPの配送と、ランチャー本体の表示中のcapture維持は実機確認が必要である。capture喪失や2秒のWindowsタイマーによる中断では、Windowsの解放を通すことを優先するため、その後のメニュー抑止を保証しない。タイマーはUIメッセージの処理に依存し、UI停止時の厳密な時間上限ではない。input-dではフック内の前面化要求を廃止し、受け取り窓のWndProcでnative DOWN到着後にcaptureを取得する。呼び出しの反応は実機で確認する。
 
 ## 実機確認が残る範囲
 
@@ -34,6 +41,22 @@ dev.8常駐中に、デスクトップ空白でユーザーが右＋左を操作
 4. 必要な場合のみ、確認用ファイルの右ドラッグで通常メニューを確認し、移動・コピーを実行せずEscで閉じる。
 
 最初に1が改善したことを確認してから残りへ進む。実機確認前のため、修正完了・全アプリ互換とは報告しない。
+
+### 試作の実機結果（未解決）
+
+- input-a: 試作EXEの実起動をPID 23944 / 試作パスで確認。ユーザーによるデスクトップ空白の右＋左ではランチャーが表示されなかった。
+- input-b-probe: 実起動をPID 30092 / 調査用試作パスで確認。ユーザー報告では最初の1回だけ表示され、以降は表示されなかった。改善済みとは扱わない。
+- input-bはEXEを直接起動した状態で、記録用環境変数が適用されておらずログを取得できなかった。診断シンボル自体はDLLに含まれることを確認したが、実行時設定と分けて扱う。入力試験の失敗を診断ツールのビルド成功で置き換えない。
+- 表示されない段階の切り分けが済むまで、PDF手書き・Codex等の追加の手動操作は依頼しない。
+- input-c-probe: rootが記録設定を付けて`--background`で起動し、PID 16532 / 試作パスとログ開始を確認した。ユーザーの確認では2回とも表示されず、元の右メニューが開いた。
+- cのログではRightThenLeftとフック登録が成立し、複数の右DOWN・左DOWNを受信していた。呼び出し判定と対象照合はtrueだったが、受け取り窓のforeground要求後も元のHWNDのままで、capture前に不成立となった。所要時間は約3〜8msであり、この再現での未表示原因はforeground拒否。フック時間切れ・設定未適用とは区別した。
+- 次は、候補の物理LEFTDOWNを低レベルフックで通し、直下の受け取り窓の通常WM_MOUSEACTIVATE→WM_LBUTTONDOWNでforeground/captureを確立する試作を行う。自身のnativeDOWN到達を確認してからランチャーを呼ぶ。同一DOWNのヒットテスト先を変えられることは公式資料では保証されておらず、デスクトップ空白の最小試作から確認する。
+- input-d-probe: `artifacts/previews/LinkLauncher-v0.1.2-dev.9-input-d-probe/LinkLauncher/`に4個の試作バイナリをpublishした。基準コミットは`5c6db96b27e16b6fcb666dcacc45315fe99db7b6`で、未コミットの変更を含む。実際のソース3ファイルのコピーとSHA-256、バイナリのSHA-256を試作フォルダー外側の`source-snapshot/`と`build-info.json`へ保存した。
+- ユーザーがinput-cを終了したことと残存プロセスなしを確認後、rootがinput-dを記録設定付き`--background`で起動した。PID 10076、試作EXEのパス、RightThenLeftのフック登録と記録開始を確認した。
+- input-dのユーザー確認は2回とも表示されず、元の右メニューが出た。左クリック停止の有無はこの回答だけでは確定していない。
+- dのログは2回とも候補・対象照合・受け窓の準備がtrueだったが、受け窓のWM_MOUSEACTIVATE/WM_LBUTTONDOWNは記録されず、WaitingForNativeDownのまま準備タイマーで中断した。元の物理LEFTDOWNを通す途中で窓を表示する方法では、この再現の配送先は切り替わらなかったと推定する。未達をtimestamp不一致・capture取得失敗と混同しない。input-dも不合格で、正式配布には使わない。
+- input-e-native-probe: `artifacts/previews/LinkLauncher-v0.1.2-dev.9-input-e-native-probe/LinkLauncher/`に7個の試作バイナリをpublishした。3個の補助バイナリ合計は22,528 bytes。ソース・バイナリのSHA-256とソースコピーを試作フォルダーの外側へ保持する。ビルド中にパス引数・ハッシュ取得・子プロセス待機・共有構造体のalignment・CRTを使わないコピー処理・x86 export/entryを修正した。最終ビルドが成功するまでの失敗は実機検証に数えない。
+- input-eの実機確認は未実施。WH_MOUSEの配送、元アプリでのcapture解除、UI ACKの時間関係は純状態試験の対象外。まだ修正完了・正式配布とは扱わない。
 
 ## 試作の比較と復元
 
@@ -49,4 +72,4 @@ dev.8常駐中に、デスクトップ空白でユーザーが右＋左を操作
 - ライセンス・起動案内を含む期待する9ファイルのみ、合計393,027 bytes。ランタイム本体・PDB・調査用ツール・ログ・ユーザーデータを含まない。各ファイルのSHA-256は試作フォルダーの外側の `build-info.json` に記録した。
 - runtimeconfigは.NETCore.AppとWindowsDesktop.Appの10.0.0共有フレームワークを参照する。
 - 保持したdev.8 ZIPのSHA-256は `2ea8c356e1601f1b6269331075461764a708099a2facd4db633f32d87faaeac2` と一致した。
-- 試作の実起動・実機の改善は回答待ち。最終配布ZIPは未作成。GitHubへのpush・公開は行っていない。
+- 試作の実起動は確認したが、実機の表示試験は不合格。最終配布ZIPは未作成。GitHubへのpush・公開は行っていない。

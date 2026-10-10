@@ -1,0 +1,9 @@
+LIBRARY "LinkLauncher.MouseHook.x86.dll"
+EXPORTS
+    BridgeInstall
+    BridgeStop
+    BridgePendingButtons
+    BridgeSequence
+    BridgeStatus
+    BridgeHasCandidate
+    BridgeTakeRequest

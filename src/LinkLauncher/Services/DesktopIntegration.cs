@@ -100,8 +100,8 @@ public sealed class DesktopIntegration : IDisposable
     private string _hotkeyLabel = string.Empty;
     private MouseActivationPattern _mousePattern;
     private readonly MouseActivationState _mouseActivationState = new();
-    private MousePressTarget _rightPressTarget;
-    private ChordReleaseReceiver? _chordReleaseReceiver;
+    private NativeMouseChord? _nativeMouseChord;
+    private uint _nativeChordSequence;
     private readonly DesktopDoubleClickState _desktopDoubleClickState = new();
     private POINT _desktopFirstPoint;
     private IntPtr _desktopFirstWindow;
@@ -205,6 +205,9 @@ public sealed class DesktopIntegration : IDisposable
     /// </summary>
     public bool Configure(string hotkey, MouseActivationPattern mousePattern, bool dismissOnExternalClick = false)
     {
+#if INPUT_PROBE
+        ChordInputProbe.Record($"configure requested={mousePattern} hook={_mouseHook.ToInt64():X}");
+#endif
         if (_disposed)
         {
             return false;
@@ -227,9 +230,6 @@ public sealed class DesktopIntegration : IDisposable
             RaiseWarning("ウィンドウのメッセージフックを設定できませんでした。");
             return false;
         }
-
-        if (mousePattern == MouseActivationPattern.RightThenLeft && !EnsureChordReleaseReceiver())
-            return false;
 
         bool needsMouseHook = mousePattern != MouseActivationPattern.None
             || dismissOnExternalClick
@@ -261,12 +261,26 @@ public sealed class DesktopIntegration : IDisposable
             }
         }
 
+        NativeMouseChord? stagedNativeChord = null;
+        if (mousePattern == MouseActivationPattern.RightThenLeft && _nativeMouseChord is null
+            && !NativeMouseChord.TryStart(_hwnd, out stagedNativeChord, out string nativeError))
+        {
+            RollbackStagedHotkey(stagedHotkeyId, hotkey);
+            RollbackStagedMouseHook(stagedMouseHook);
+#if INPUT_PROBE
+            ChordInputProbe.Record($"native startup failed: {nativeError}");
+#endif
+            RaiseWarning($"右＋左の入力仲介を開始できませんでした。以前の設定を維持します: {nativeError}");
+            return false;
+        }
+
         int previousHotkeyId = _currentHotkeyId;
         if (hotkeyNeedsChange && previousHotkeyId != 0 && !UnregisterHotKey(_hwnd, previousHotkeyId))
         {
             int error = Marshal.GetLastWin32Error();
             RollbackStagedHotkey(stagedHotkeyId, hotkey);
             RollbackStagedMouseHook(stagedMouseHook);
+            stagedNativeChord?.Dispose();
             RaiseWarning($"以前のホットキーを解除できませんでした。設定を維持します (Win32: {error})。");
             return false;
         }
@@ -306,6 +320,15 @@ public sealed class DesktopIntegration : IDisposable
 
         _mousePattern = mousePattern;
         _dismissOnExternalClick = dismissOnExternalClick;
+        if (stagedNativeChord is not null) _nativeMouseChord = stagedNativeChord;
+        if (mousePattern != MouseActivationPattern.RightThenLeft)
+        {
+            _nativeMouseChord?.Dispose();
+            _nativeMouseChord = null;
+        }
+#if INPUT_PROBE
+        ChordInputProbe.Record($"configure applied={_mousePattern} hook={_mouseHook.ToInt64():X} nativeStatus={_nativeMouseChord?.Status}");
+#endif
         if (_mouseHook != IntPtr.Zero && !ShouldKeepMouseHook)
         {
             if (UnhookWindowsHookEx(_mouseHook))
@@ -362,12 +385,8 @@ public sealed class DesktopIntegration : IDisposable
         _disposed = true;
         CancelMouseActivationCompletion();
         CancelDesktopDoubleClick();
-        if (_chordReleaseReceiver != null)
-        {
-            _chordReleaseReceiver.Completed -= OnChordReleaseCompleted;
-            _chordReleaseReceiver.Dispose();
-            _chordReleaseReceiver = null;
-        }
+        _nativeMouseChord?.Dispose();
+        _nativeMouseChord = null;
         _window.SourceInitialized -= OnSourceInitialized;
         _window.Closed -= OnWindowClosed;
 
@@ -496,6 +515,34 @@ public sealed class DesktopIntegration : IDisposable
 
     private IntPtr WindowMessageHook(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
+#if INPUT_PROBE
+        if (message == 0x803A)
+        {
+            handled = true;
+            ChordInputProbe.Record($"native stage={wParam.ToInt64()} detail={lParam.ToInt64()}");
+            return IntPtr.Zero;
+        }
+#endif
+        if (message == NativeMouseChord.NotificationMessage)
+        {
+            handled = true;
+            uint sequence = unchecked((uint)wParam.ToInt64());
+            int notification = unchecked((int)lParam.ToInt64());
+            if (_disposed || _mousePattern != MouseActivationPattern.RightThenLeft || _nativeMouseChord is null)
+                return IntPtr.Zero;
+            if (notification == NativeMouseChord.BeginNotification && _nativeMouseChord.TryTakeRequest(sequence))
+                return BeginNativeMouseActivation(sequence);
+            if (notification == NativeMouseChord.CompleteNotification && sequence == _nativeChordSequence
+                && _nativeMouseChord.PendingButtons == 0)
+            {
+#if INPUT_PROBE
+                ChordInputProbe.Record($"native complete seq={sequence} status={_nativeMouseChord.Status}");
+#endif
+                Action? completion = _mouseActivationCompletion.Release();
+                if (completion is not null) QueueMouseActivationCompletion(_mouseActivationTicket, completion);
+            }
+            return IntPtr.Zero;
+        }
         if (message == WmHotkey)
         {
             int id = unchecked((int)wParam.ToInt64());
@@ -535,6 +582,10 @@ public sealed class DesktopIntegration : IDisposable
             }
         }
 
+#if INPUT_PROBE
+        if (message is WmRButtonDown or WmLButtonDown)
+            ChordInputProbe.Record($"hook down={message:X} pattern={_mousePattern} pending={_mouseActivationState.IsPending}");
+#endif
         if (!ShouldInspectMouseMessage(message))
         {
             return CallNextHookSafely(code, wParam, lParam);
@@ -558,9 +609,9 @@ public sealed class DesktopIntegration : IDisposable
                 return CallNextHookSafely(code, wParam, lParam);
             }
 
-            // 通過済みの右DOWNには、Windows自身が処理するUPを対応させる。
-            // 呼び出し中の解放は自前の受け取り窓で処理し、低レベルフックでは止めない。
-            if (_chordReleaseReceiver?.IsActive == true)
+            // 右＋左は通常のWH_MOUSEでウィンドウ宛ての通知だけを仲介する。
+            // Windowsの入力列とグローバルボタン状態を更新するLL入力はすべて通す。
+            if (_nativeMouseChord?.IsGestureActive == true)
                 return CallNextHookSafely(code, wParam, lParam);
 
             if (TryConsumeSuppressedUp(message, mouse.MouseData))
@@ -598,7 +649,6 @@ public sealed class DesktopIntegration : IDisposable
             if (message is WmMouseWheel or WmMouseHWheel && _mouseActivationState.IsDownPassed)
             {
                 _mouseActivationState.Cancel();
-                _rightPressTarget = default;
             }
 
             if (_dismissOnExternalClick
@@ -622,7 +672,6 @@ public sealed class DesktopIntegration : IDisposable
                 {
                     POINT downPoint = new() { X = _mouseActivationState.StartX, Y = _mouseActivationState.StartY };
                     _mouseActivationState.Cancel();
-                    _rightPressTarget = default;
                     QueueExternalButtonDownIfOutside(downPoint);
                     return CallNextHookSafely(code, wParam, lParam);
                 }
@@ -654,7 +703,6 @@ public sealed class DesktopIntegration : IDisposable
         catch (Exception exception)
         {
             _mouseActivationState.Cancel();
-            _rightPressTarget = default;
             if (pendingUpBeingProcessed && !pendingDownPassed)
             {
                 // DownをOSへ渡していないため、現在のUpだけを抑止します。
@@ -684,25 +732,6 @@ public sealed class DesktopIntegration : IDisposable
         {
             MouseActivationButton primaryButton = _mouseActivationState.Button;
             MouseActivationButton secondButton = GetActivationButton(message, mouse.MouseData);
-            if (_mouseActivationState.IsDownPassed)
-            {
-                bool canActivate = !_mouseActivationState.ShouldRestoreOnMove(mouse.Point.X, mouse.Point.Y)
-                    && _mouseActivationState.IsExpectedChord(_mousePattern, secondButton)
-                    && !HasSuppressedButtonUps
-                    && (GetAsyncKeyState(VkRightButton) & unchecked((short)0x8000)) != 0
-                    && !AreOtherMouseButtonsDownExcept(primaryButton, secondButton)
-                    && CanSafelyInterceptAt(mouse.Point)
-                    && MousePressCancellation.CanTransfer(_rightPressTarget, mouse.Point.X, mouse.Point.Y);
-                _mouseActivationState.Cancel();
-                _rightPressTarget = default;
-                if (canActivate && _chordReleaseReceiver?.TryBegin(mouse.Point.X, mouse.Point.Y) == true)
-                {
-                    QueueMouseActivation();
-                    return new IntPtr(1);
-                }
-                // Downはすでに通過済み。失敗や他の組み合わせでも再送しない。
-                return CallNextHookSafely(code, wParam, lParam);
-            }
             if (_mouseActivationState.ShouldRestoreOnMove(mouse.Point.X, mouse.Point.Y))
             {
                 MouseDragRestoreResult restore = RestorePendingPressForDrag(mouse.Point, primaryButton);
@@ -777,13 +806,7 @@ public sealed class DesktopIntegration : IDisposable
 
         if (message == WmRButtonDown && _mousePattern == MouseActivationPattern.RightThenLeft)
         {
-            if (!AreOtherMouseButtonsDownExcept(MouseActivationButton.Right))
-            {
-                _rightPressTarget = MousePressCancellation.Capture(mouse.Point.X, mouse.Point.Y, _processId);
-                if (_rightPressTarget.IsValid)
-                    _mouseActivationState.TryBegin(MouseActivationButton.Right, mouse.Point.X, mouse.Point.Y);
-            }
-            if (!_mouseActivationState.IsPending) QueueExternalButtonDownIfOutside(mouse.Point);
+            // 最初の右DOWNを含め、LLフックでは右＋左の入力を保留・再送しない。
             return CallNextHookSafely(code, wParam, lParam);
         }
 
@@ -848,7 +871,6 @@ public sealed class DesktopIntegration : IDisposable
         MouseActivationReleaseAction action = _mouseActivationState.Release();
         if (button == MouseActivationButton.Right)
         {
-            _rightPressTarget = default;
             QueueExternalButtonDownIfOutside(downPoint);
         }
         if (action == MouseActivationReleaseAction.ReplayClick)
@@ -902,7 +924,6 @@ public sealed class DesktopIntegration : IDisposable
         MouseActivationButton button = _mouseActivationState.Button;
         bool downPassed = _mouseActivationState.IsDownPassed;
         _mouseActivationState.Cancel();
-        _rightPressTarget = default;
         if (downPassed) return true;
         if (!GetPhysicalCursorPos(out POINT currentPoint) || !CanSafelyInjectAt(currentPoint))
         {
@@ -1083,6 +1104,8 @@ public sealed class DesktopIntegration : IDisposable
         {
             WmMButtonDown => _mousePattern is MouseActivationPattern.MiddleClick or MouseActivationPattern.MiddleThenRight,
             WmRButtonDown => _mousePattern == MouseActivationPattern.RightThenLeft,
+            WmLButtonDown => _mousePattern == MouseActivationPattern.RightThenLeft
+                && _nativeMouseChord?.HasCandidate == true,
             WmXButtonDown => (_mousePattern == MouseActivationPattern.XButton1 && button == MouseActivationButton.XButton1)
                 || (_mousePattern == MouseActivationPattern.XButton2 && button == MouseActivationButton.XButton2),
             _ => false
@@ -1356,7 +1379,7 @@ public sealed class DesktopIntegration : IDisposable
     private void QueueMouseActivation()
     {
         long ticket = _mouseActivationTicket = _mouseActivationCompletion.Begin();
-        if (!HasSuppressedButtonUps && _chordReleaseReceiver?.IsActive != true)
+        if (!HasSuppressedButtonUps && _nativeMouseChord?.IsGestureActive != true)
             _mouseActivationCompletion.Release();
         QueueUiAction(() =>
         {
@@ -1368,32 +1391,30 @@ public sealed class DesktopIntegration : IDisposable
         });
     }
 
-    private bool EnsureChordReleaseReceiver()
+    private IntPtr BeginNativeMouseActivation(uint sequence)
     {
-        if (_chordReleaseReceiver != null) return true;
+        _nativeChordSequence = sequence;
+        long ticket = _mouseActivationTicket = _mouseActivationCompletion.Begin();
+        _mouseActivationCallbackQueued = false;
         try
         {
-            _chordReleaseReceiver = new ChordReleaseReceiver();
-            _chordReleaseReceiver.Completed += OnChordReleaseCompleted;
-            return true;
+            // 呼び出し元のWH_MOUSE callbackへ表示結果を返すため、この通知内で表示する。
+            // 元のforegroundプロセスがその後SetForegroundWindowを要求する。
+            _toggle();
+            if (_nativeMouseChord?.PendingButtons == 0) _mouseActivationCompletion.Release();
+            Action? completion = _mouseActivationCompletion.Capture(ticket, _captureMouseActivationCompletion?.Invoke());
+            if (completion is not null) QueueMouseActivationCompletion(ticket, completion);
+#if INPUT_PROBE
+            ChordInputProbe.Record($"native begin seq={sequence} visible={_window.IsVisible} pending={_nativeMouseChord?.PendingButtons} status={_nativeMouseChord?.Status}");
+#endif
+            return new IntPtr(_window.IsVisible ? 1 : 2);
         }
         catch (Exception exception)
         {
-            RaiseWarning($"呼び出し時の解放入力を受け取る窓を用意できませんでした: {exception.Message}");
-            return false;
-        }
-    }
-
-    private void OnChordReleaseCompleted(bool completed)
-    {
-        if (!completed)
-        {
             CancelMouseActivationCompletion();
-            return;
+            QueueWarning($"右＋左での呼び出しに失敗しました: {exception.Message}");
+            return IntPtr.Zero;
         }
-        Action? completion = _mouseActivationCompletion.Release();
-        if (!_disposed && completion != null)
-            QueueMouseActivationCompletion(_mouseActivationTicket, completion);
     }
 
     private void ObserveDesktopDoubleClick(int message, MSLLHOOKSTRUCT mouse)

@@ -10,13 +10,16 @@ namespace LinkLauncher.Services;
 /// </summary>
 public sealed class ChordReleaseReceiver : IDisposable
 {
+    internal const uint PreparationTimerId = 0x43485243;
+    internal const uint PreparationMilliseconds = 250;
     internal const uint WatchdogTimerId = 0x43485244;
     internal const uint WatchdogMilliseconds = 2000;
 
     private enum Phase
     {
         Idle,
-        Arming,
+        WaitingForNativeDown,
+        EstablishingCapture,
         Active,
         Finishing,
         Disposed
@@ -26,15 +29,24 @@ public sealed class ChordReleaseReceiver : IDisposable
     private readonly int _ownerThreadId;
     private readonly IntPtr _window;
     private Phase _phase;
+    private uint _expectedNativeDownTime;
     private bool _leftUpReceived;
     private bool _rightUpReceived;
     private bool _timerMayBeArmed;
+    private uint _armedTimerId;
     private bool _disposed;
     private bool _notifying;
+    private bool _startedNotifying;
+    private bool _startedRaised;
     private IntPtr _previousForeground;
     private long _sessionSequence;
     private long _completedSession;
     private bool _completedSuccessfully;
+
+    /// <summary>
+    /// nativeのLEFTDOWNを受信し、foregroundとcaptureを確認した時点で一度通知します。
+    /// </summary>
+    public event Action? Started;
 
     /// <summary>
     /// 現セッションの両UP受領でtrue、中断・失敗・timeout・Disposeでfalseを一度通知します。
@@ -42,15 +54,14 @@ public sealed class ChordReleaseReceiver : IDisposable
     public event Action<bool>? Completed;
 
     /// <summary>
-    /// setup中の再入と、左右UPの両方をまだ受信していないセッションを示します。
-    /// trueだけではnative foreground/capture成立を意味せず、TryBeginの戻り値で確認します。
+    /// native LEFTDOWNの到着待ち、capture確立中、または有効なcapture中のセッションを示します。
     /// </summary>
     public bool IsActive
     {
         get
         {
             VerifyOwnerThread();
-            return _phase is Phase.Arming or Phase.Active;
+            return _phase is Phase.WaitingForNativeDown or Phase.EstablishingCapture or Phase.Active;
         }
     }
 
@@ -82,13 +93,14 @@ public sealed class ChordReleaseReceiver : IDisposable
     }
 
     /// <summary>
-    /// 指定した物理座標に受信windowを表示し、foregroundとcaptureを確認して受信を開始します。
-    /// foreground/captureを確認できない場合はfalseを返し、left DOWNの消費を許可しません。
+    /// 指定した物理座標に受信windowを表示し、native LEFTDOWNを受ける準備をします。
+    /// nativeDownTimeは低レベルフックで観測した時刻です。受信後にGetMessageTimeと照合します。
+    /// LEFTDOWNはフックで通過させ、受信windowが実際に受け取った後でcaptureを確立します。
     /// </summary>
-    public bool TryBegin(int x, int y)
+    public bool TryBegin(int x, int y, uint nativeDownTime)
     {
         VerifyOwnerThread();
-        if (_disposed || _notifying || _phase != Phase.Idle)
+        if (_disposed || _notifying || _startedNotifying || _phase != Phase.Idle)
         {
             return false;
         }
@@ -99,79 +111,44 @@ public sealed class ChordReleaseReceiver : IDisposable
             session = unchecked(++_sessionSequence);
         }
 
+        _expectedNativeDownTime = nativeDownTime;
         _leftUpReceived = false;
         _rightUpReceived = false;
         _timerMayBeArmed = false;
+        _armedTimerId = 0;
+        _startedRaised = false;
         _previousForeground = IntPtr.Zero;
 
-        // Show/foreground/capture APIs can reenter the message hook. Arm the protocol first
-        // so any UP received during setup is retained and evaluated after verification.
-        _phase = Phase.Arming;
-        bool established = false;
+        // Showing the hit-test window can reenter window-message dispatch. Arm the protocol
+        // before showing it so an early native message is either handled or safely aborted.
+        _phase = Phase.WaitingForNativeDown;
+        bool preparationSucceeded = false;
 
         try
         {
             _previousForeground = _platform.GetForegroundWindow();
+#if INPUT_PROBE
+            ChordInputProbe.Record($"receiver begin self={_window.ToInt64():X} previous={_previousForeground.ToInt64():X} expectedDownTime={_expectedNativeDownTime}");
+#endif
             if (!_platform.ShowAtPhysicalPoint(x, y))
             {
+#if INPUT_PROBE
+                ChordInputProbe.Record("receiver show failed");
+#endif
                 Finish(false);
                 return false;
             }
+            preparationSucceeded = true;
 
-            if (_phase != Phase.Arming)
+            if (_phase != Phase.WaitingForNativeDown)
             {
-                return BeginResult(session, established);
+                return BeginResult(session, preparationSucceeded);
             }
 
-            // SetForegroundWindow is subject to Windows foreground-lock rules. Its return
-            // value is advisory; the observed foreground HWND is the acceptance criterion.
-            _platform.RequestForeground(_window);
-            if (_phase != Phase.Arming)
+            bool timerStarted = StartTimer(PreparationTimerId, PreparationMilliseconds, Phase.WaitingForNativeDown);
+            if (_phase != Phase.WaitingForNativeDown)
             {
-                return BeginResult(session, established);
-            }
-
-            if (_platform.GetForegroundWindow() != _window)
-            {
-                Finish(false);
-                return false;
-            }
-
-            _platform.RequestCapture(_window);
-            if (_phase != Phase.Arming)
-            {
-                return BeginResult(session, established);
-            }
-
-            if (_platform.GetCapture() != _window)
-            {
-                Finish(false);
-                return false;
-            }
-
-            if (_platform.GetForegroundWindow() != _window)
-            {
-                Finish(false);
-                return false;
-            }
-
-            established = true;
-            _phase = Phase.Active;
-
-            // Both UPs may have been delivered reentrantly while setup APIs ran. In that
-            // case the physical protocol is already complete and no watchdog is needed.
-            if (_leftUpReceived && _rightUpReceived)
-            {
-                Finish(true);
-                return BeginResult(session, established);
-            }
-
-            // Mark before calling the platform because message dispatch can reenter.
-            _timerMayBeArmed = true;
-            bool timerStarted = _platform.StartWatchdog(WatchdogTimerId, WatchdogMilliseconds);
-            if (_phase != Phase.Active)
-            {
-                return BeginResult(session, established);
+                return BeginResult(session, preparationSucceeded);
             }
 
             if (!timerStarted)
@@ -184,12 +161,12 @@ public sealed class ChordReleaseReceiver : IDisposable
         }
         catch
         {
-            if (_phase is Phase.Arming or Phase.Active)
+            if (_phase is Phase.WaitingForNativeDown or Phase.EstablishingCapture or Phase.Active)
             {
                 Finish(false);
             }
 
-            return BeginResult(session, established);
+            return BeginResult(session, preparationSucceeded);
         }
     }
 
@@ -205,7 +182,7 @@ public sealed class ChordReleaseReceiver : IDisposable
         }
 
         _disposed = true;
-        if (_phase is Phase.Arming or Phase.Active)
+        if (_phase is Phase.WaitingForNativeDown or Phase.EstablishingCapture or Phase.Active)
         {
             Finish(false);
         }
@@ -215,14 +192,14 @@ public sealed class ChordReleaseReceiver : IDisposable
         GC.SuppressFinalize(this);
     }
 
-    private bool BeginResult(long session, bool established)
+    private bool BeginResult(long session, bool preparationSucceeded)
     {
-        if (!established)
+        if (!preparationSucceeded)
         {
             return false;
         }
 
-        if (_phase == Phase.Active && _sessionSequence == session)
+        if (_sessionSequence == session && (_phase is Phase.WaitingForNativeDown or Phase.EstablishingCapture or Phase.Active))
         {
             return true;
         }
@@ -236,6 +213,29 @@ public sealed class ChordReleaseReceiver : IDisposable
         {
             switch (message)
             {
+                case ChordReleaseReceiverMessages.WmLButtonDown:
+                    ReceiveNativeLeftDown(lParam);
+                    return IntPtr.Zero;
+
+                case ChordReleaseReceiverMessages.WmRButtonDown:
+                case ChordReleaseReceiverMessages.WmNcRButtonDown:
+                    ReceiveNativeDown(left: false);
+                    return IntPtr.Zero;
+
+                case ChordReleaseReceiverMessages.WmNcLButtonDown:
+                    ReceiveNativeDown(left: true);
+                    return IntPtr.Zero;
+
+                case ChordReleaseReceiverMessages.WmLButtonDoubleClick:
+                case ChordReleaseReceiverMessages.WmNcLButtonDoubleClick:
+                    ReceiveNativeDown(left: true);
+                    return IntPtr.Zero;
+
+                case ChordReleaseReceiverMessages.WmRButtonDoubleClick:
+                case ChordReleaseReceiverMessages.WmNcRButtonDoubleClick:
+                    ReceiveNativeDown(left: false);
+                    return IntPtr.Zero;
+
                 case ChordReleaseReceiverMessages.WmLButtonUp:
                 case ChordReleaseReceiverMessages.WmNcLButtonUp:
                     ReceiveUp(left: true);
@@ -246,35 +246,50 @@ public sealed class ChordReleaseReceiver : IDisposable
                     ReceiveUp(left: false);
                     return IntPtr.Zero;
 
-                case ChordReleaseReceiverMessages.WmLButtonDown:
-                case ChordReleaseReceiverMessages.WmLButtonDoubleClick:
-                case ChordReleaseReceiverMessages.WmRButtonDown:
-                case ChordReleaseReceiverMessages.WmRButtonDoubleClick:
-                case ChordReleaseReceiverMessages.WmNcLButtonDown:
-                case ChordReleaseReceiverMessages.WmNcLButtonDoubleClick:
-                case ChordReleaseReceiverMessages.WmNcRButtonDown:
-                case ChordReleaseReceiverMessages.WmNcRButtonDoubleClick:
                 case ChordReleaseReceiverMessages.WmContextMenu:
                     // The receiver must not perform its own click/default context-menu action.
                     return IntPtr.Zero;
 
                 case ChordReleaseReceiverMessages.WmMouseActivate:
+                    if (_phase is not (Phase.WaitingForNativeDown or Phase.EstablishingCapture or Phase.Active))
+                    {
+                        return new IntPtr(ChordReleaseReceiverMessages.MaNoActivateAndEat);
+                    }
+
+#if INPUT_PROBE
+                    ChordInputProbe.Record($"receiver WM_MOUSEACTIVATE foreground={_platform.GetForegroundWindow().ToInt64():X} messageTime={_platform.GetMessageTime()} lParam={lParam.ToInt64():X}");
+#endif
                     return new IntPtr(ChordReleaseReceiverMessages.MaActivate);
 
                 case ChordReleaseReceiverMessages.WmNcHitTest:
                     return new IntPtr(ChordReleaseReceiverMessages.HtClient);
 
                 case ChordReleaseReceiverMessages.WmTimer:
-                    if (unchecked((uint)wParam.ToInt64()) == WatchdogTimerId && _phase == Phase.Active)
+                {
+                    uint timerId = unchecked((uint)wParam.ToInt64());
+                    if (timerId == PreparationTimerId && _phase == Phase.WaitingForNativeDown)
                     {
+#if INPUT_PROBE
+                        ChordInputProbe.Record("receiver native LEFTDOWN preparation timeout");
+#endif
+                        Finish(false);
+                        return IntPtr.Zero;
+                    }
+
+                    if (timerId == WatchdogTimerId && _phase == Phase.Active)
+                    {
+#if INPUT_PROBE
+                        ChordInputProbe.Record("receiver active watchdog timeout");
+#endif
                         Finish(false);
                         return IntPtr.Zero;
                     }
 
                     return null;
+                }
 
                 case ChordReleaseReceiverMessages.WmCaptureChanged:
-                    if ((_phase is Phase.Arming or Phase.Active) && _platform.GetCapture() != _window)
+                    if ((_phase is Phase.EstablishingCapture or Phase.Active) && _platform.GetCapture() != _window)
                     {
                         Finish(false);
                     }
@@ -282,7 +297,7 @@ public sealed class ChordReleaseReceiver : IDisposable
                     return IntPtr.Zero;
 
                 case ChordReleaseReceiverMessages.WmShowWindow:
-                    if (wParam == IntPtr.Zero && (_phase is Phase.Arming or Phase.Active))
+                    if (wParam == IntPtr.Zero && (_phase is Phase.WaitingForNativeDown or Phase.EstablishingCapture or Phase.Active))
                     {
                         Finish(false);
                     }
@@ -290,7 +305,7 @@ public sealed class ChordReleaseReceiver : IDisposable
                     return null;
 
                 case ChordReleaseReceiverMessages.WmDestroy:
-                    if (_phase is Phase.Arming or Phase.Active)
+                    if (_phase is Phase.WaitingForNativeDown or Phase.EstablishingCapture or Phase.Active)
                     {
                         Finish(false);
                     }
@@ -305,7 +320,7 @@ public sealed class ChordReleaseReceiver : IDisposable
         {
             // Do not let an exception cross the native WndProc boundary. If receiver state
             // cannot be observed reliably, abort this session without manufacturing UPs.
-            if (_phase is Phase.Arming or Phase.Active)
+            if (_phase is Phase.WaitingForNativeDown or Phase.EstablishingCapture or Phase.Active)
             {
                 Finish(false);
             }
@@ -314,9 +329,140 @@ public sealed class ChordReleaseReceiver : IDisposable
         }
     }
 
+    private void ReceiveNativeLeftDown(IntPtr lParam)
+    {
+        if (_phase != Phase.WaitingForNativeDown)
+        {
+            ReceiveNativeDown(left: true);
+            return;
+        }
+
+        uint messageTime = _platform.GetMessageTime();
+        if (messageTime != _expectedNativeDownTime || lParam != IntPtr.Zero)
+        {
+#if INPUT_PROBE
+            ChordInputProbe.Record($"receiver LEFTDOWN mismatch expectedTime={_expectedNativeDownTime} messageTime={messageTime} lParam={lParam.ToInt64():X}");
+#endif
+            Finish(false);
+            return;
+        }
+
+#if INPUT_PROBE
+        ChordInputProbe.Record($"receiver WM_LBUTTONDOWN match expectedTime={_expectedNativeDownTime} messageTime={messageTime} lParam={lParam.ToInt64():X} foreground={_platform.GetForegroundWindow().ToInt64():X}");
+#endif
+        _phase = Phase.EstablishingCapture;
+        StopTimer();
+        if (_phase != Phase.EstablishingCapture)
+        {
+            return;
+        }
+
+        if (_platform.GetForegroundWindow() != _window)
+        {
+#if INPUT_PROBE
+            ChordInputProbe.Record("receiver native LEFTDOWN did not activate receiver");
+#endif
+            Finish(false);
+            return;
+        }
+
+        _platform.RequestCapture(_window);
+        if (_phase != Phase.EstablishingCapture)
+        {
+            return;
+        }
+
+        if (_platform.GetCapture() != _window || _platform.GetForegroundWindow() != _window)
+        {
+#if INPUT_PROBE
+            ChordInputProbe.Record($"receiver capture establishment failed capture={_platform.GetCapture().ToInt64():X} foreground={_platform.GetForegroundWindow().ToInt64():X}");
+#endif
+            Finish(false);
+            return;
+        }
+
+        _phase = Phase.Active;
+        bool timerStarted = StartTimer(WatchdogTimerId, WatchdogMilliseconds, Phase.Active);
+        if (_phase != Phase.Active)
+        {
+            return;
+        }
+
+        if (!timerStarted)
+        {
+            Finish(false);
+            return;
+        }
+
+#if INPUT_PROBE
+        ChordInputProbe.Record($"receiver foreground/capture established foreground={_platform.GetForegroundWindow().ToInt64():X} capture={_platform.GetCapture().ToInt64():X}");
+#endif
+        _startedRaised = true;
+        NotifyStarted();
+
+        // UPs can arrive while SetCapture or SetTimer dispatches messages reentrantly.
+        if (_phase == Phase.Active && _startedRaised && !_startedNotifying && _leftUpReceived && _rightUpReceived)
+        {
+            Finish(true);
+        }
+    }
+
+    private bool StartTimer(uint timerId, uint milliseconds, Phase expectedPhase)
+    {
+        _timerMayBeArmed = true;
+        _armedTimerId = timerId;
+        bool started = _platform.StartWatchdog(timerId, milliseconds);
+        if (_phase != expectedPhase)
+        {
+            return false;
+        }
+
+        return started;
+    }
+
+    private void StopTimer()
+    {
+        if (!_timerMayBeArmed)
+        {
+            return;
+        }
+
+        uint timerId = _armedTimerId;
+        _timerMayBeArmed = false;
+        _armedTimerId = 0;
+        try { _platform.StopWatchdog(timerId); } catch { }
+    }
+
+    private void ReceiveNativeDown(bool left)
+    {
+        if (_phase is not (Phase.EstablishingCapture or Phase.Active))
+        {
+            return;
+        }
+
+        // native再DOWN後は以前のUP記録を現在の物理状態として扱えません。
+        // ここではUP記録だけ戻し、別セッションは開始しません。
+        if (left)
+        {
+            _leftUpReceived = false;
+        }
+        else
+        {
+            _rightUpReceived = false;
+        }
+    }
+
     private void ReceiveUp(bool left)
     {
-        if (_phase is not (Phase.Arming or Phase.Active))
+        if (_phase == Phase.WaitingForNativeDown)
+        {
+            // Do not keep a window around to absorb a later click when the chord's
+            // physical LEFTDOWN never reached it.
+            Finish(false);
+            return;
+        }
+
+        if (_phase is not (Phase.EstablishingCapture or Phase.Active))
         {
             return;
         }
@@ -332,25 +478,27 @@ public sealed class ChordReleaseReceiver : IDisposable
 
         if (_phase == Phase.Active && _leftUpReceived && _rightUpReceived)
         {
-            Finish(true);
+            if (_startedRaised && !_startedNotifying)
+            {
+                Finish(true);
+            }
         }
     }
 
     private void Finish(bool succeeded)
     {
-        if (_phase is not (Phase.Arming or Phase.Active))
+        if (_phase is not (Phase.WaitingForNativeDown or Phase.EstablishingCapture or Phase.Active))
         {
             return;
         }
 
         long session = _sessionSequence;
+#if INPUT_PROBE
+        ChordInputProbe.Record($"receiver finish success={succeeded} phase={_phase} nativeLeftDown={(_phase is Phase.EstablishingCapture or Phase.Active)} leftUp={_leftUpReceived} rightUp={_rightUpReceived}");
+#endif
         _phase = Phase.Finishing;
 
-        if (_timerMayBeArmed)
-        {
-            _timerMayBeArmed = false;
-            try { _platform.StopWatchdog(WatchdogTimerId); } catch { }
-        }
+        StopTimer();
 
         try
         {
@@ -382,9 +530,35 @@ public sealed class ChordReleaseReceiver : IDisposable
         _completedSuccessfully = succeeded;
         _leftUpReceived = false;
         _rightUpReceived = false;
+        _startedRaised = false;
         _previousForeground = IntPtr.Zero;
         _phase = _disposed ? Phase.Disposed : Phase.Idle;
         NotifyCompleted(succeeded);
+    }
+
+    private void NotifyStarted()
+    {
+        Action? handlers = Started;
+        if (handlers is null)
+        {
+            return;
+        }
+
+        _startedNotifying = true;
+        try
+        {
+            foreach (Delegate subscriber in handlers.GetInvocationList())
+            {
+                if (subscriber is Action handler)
+                {
+                    try { handler(); } catch { }
+                }
+            }
+        }
+        finally
+        {
+            _startedNotifying = false;
+        }
     }
 
     private void NotifyCompleted(bool succeeded)
@@ -441,6 +615,7 @@ internal interface IChordReleaseReceiverPlatform : IDisposable
     IntPtr CreateWindow(Func<int, IntPtr, IntPtr, IntPtr?> messageHandler);
     IntPtr GetForegroundWindow();
     IntPtr GetCapture();
+    uint GetMessageTime();
     bool ShowAtPhysicalPoint(int x, int y);
     void RequestForeground(IntPtr window);
     void RequestCapture(IntPtr window);
@@ -472,6 +647,7 @@ internal static class ChordReleaseReceiverMessages
     internal const int WmNcRButtonUp = 0x00A5;
     internal const int WmNcRButtonDoubleClick = 0x00A6;
     internal const int MaActivate = 1;
+    internal const int MaNoActivateAndEat = 4;
     internal const int HtClient = 1;
 }
 
@@ -479,9 +655,11 @@ internal sealed class Win32ChordReleaseReceiverPlatform : IChordReleaseReceiverP
 {
     private const int WsPopup = unchecked((int)0x80000000);
     private const int WsExToolWindow = 0x00000080;
+    private const uint SwpNoActivate = 0x0010;
     private const uint SwpShowWindow = 0x0040;
     private const uint SwpNoOwnerZOrder = 0x0200;
     private const int SwHide = 0;
+    private static readonly IntPtr HwndTopmost = new(-1);
 
     private readonly int _ownerThreadId = Environment.CurrentManagedThreadId;
     private HwndSource? _source;
@@ -526,17 +704,19 @@ internal sealed class Win32ChordReleaseReceiverPlatform : IChordReleaseReceiverP
 
     public IntPtr GetCapture() => NativeMethods.GetCapture();
 
+    public uint GetMessageTime() => unchecked((uint)NativeMethods.GetMessageTime());
+
     public bool ShowAtPhysicalPoint(int x, int y)
     {
         EnsureOwnerThread();
         return NativeMethods.SetWindowPos(
             _window,
-            IntPtr.Zero,
+            HwndTopmost,
             x,
             y,
             1,
             1,
-            SwpShowWindow | SwpNoOwnerZOrder);
+            SwpShowWindow | SwpNoActivate | SwpNoOwnerZOrder);
     }
 
     public void RequestForeground(IntPtr window)
@@ -647,6 +827,9 @@ internal sealed class Win32ChordReleaseReceiverPlatform : IChordReleaseReceiverP
 
         [DllImport("user32.dll")]
         internal static extern IntPtr GetCapture();
+
+        [DllImport("user32.dll")]
+        internal static extern int GetMessageTime();
 
         [DllImport("user32.dll")]
         [return: MarshalAs(UnmanagedType.Bool)]
