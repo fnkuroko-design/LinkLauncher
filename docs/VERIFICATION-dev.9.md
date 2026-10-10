@@ -212,6 +212,8 @@ input-dのChordReleaseChecksは1回実行した。12個のチェックが成功�
 - 新試作は`artifacts/previews/LinkLauncher-v0.1.2-dev.9-input-p-source-return-grant-probe/`。アプリ内5バイナリのみ、x64 DLLは18,432 bytes。20ソースのコピーとSHA-256、本体5バイナリのSHA-256を外側へ保持した。純状態に変更がなく13ケースは再実行していない。source threadでの権限付与はx64 source-contextに限り、installer側callbackでは実行しない。両bitness全アプリの実機合格を主張しない。
 - 最後にinput-o PID 8324の単独常駐を確認したためinput-pは未起動。userのトレイ終了連絡後に残存なしとバイナリ一致を確認してpを記録付きで起動する。設定・データ・スタートアップを変更していない。旧dev.8 ZIPのSHA-256は従前と一致。強制停止・入力生成・カーソル操作・Computer Use・正式ZIP・GitHub公開は行っていない。受入未達のまま手動比較待ち。
 
+- ユーザーのinput-o終了連絡後、常駐なしと5バイナリのSHA-256一致を確認しinput-pを記録付きで起動した。本体PID 33720が試作EXEのパスで単独常駐、status=53、stage 54/56/55各detail 1。記録先は`observations/20261011-032757-a146b1d3e8cb429a9d2bfa2a36ee8f62/`。起動前後のlibrary.json SHA-256は一致した。設定・スタートアップ変更、入力生成、カーソル操作、強制停止は行っていない。実機受入はユーザー確認待ち。
+
 ## 試作の比較と復元
 
 2版の同時起動は単一起動制御でできない。旧dev.8をトレイから終了し、dev.9の試作用EXEを起動する。比較中は設定の保存を行わず、スタートアップ登録先を変更しない。元へ戻す場合はdev.9をトレイから終了し、保持した `artifacts/releases/LinkLauncher-v0.1.2-dev.8-win-x64/LinkLauncher/LinkLauncher.exe` を起動する。
