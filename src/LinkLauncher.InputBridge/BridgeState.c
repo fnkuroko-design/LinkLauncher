@@ -15,7 +15,7 @@ void BridgeMenuGuardArm(BRIDGE_MENU_GUARD *guard, BRIDGE_U64 root,
     guard->targetTid = (BRIDGE_I32)tid;
     guard->ownerShown = ownerShown;
     guard->startTick = tick;
-    guard->reserved = 0;
+    guard->focusAttempted = 0;
 }
 
 BRIDGE_I32 BridgeMenuGuardMatches(const BRIDGE_MENU_GUARD *guard,
@@ -40,6 +40,19 @@ BRIDGE_I32 BridgeMenuGuardMatchesEvent(const BRIDGE_MENU_GUARD *guard,
      * a menu event that predates this accepted gesture, including clock wrap. */
     return (BRIDGE_U32)(eventTick - guard->startTick) < 0x80000000UL &&
         (BRIDGE_U32)(tick - eventTick) < 0x80000000UL;
+}
+
+BRIDGE_I32 BridgeMenuGuardTakeFocusTransfer(BRIDGE_MENU_GUARD *guard,
+    BRIDGE_U64 root, BRIDGE_U32 pid, BRIDGE_U32 tid,
+    BRIDGE_I32 ownerVisible, BRIDGE_I32 ownerForeground,
+    BRIDGE_I32 buttonsDown, BRIDGE_I32 standardMenuActive,
+    BRIDGE_U32 eventTick, BRIDGE_U32 tick)
+{
+    if (!ownerVisible || !ownerForeground || buttonsDown || standardMenuActive ||
+        !BridgeMenuGuardMatchesEvent(guard, root, pid, tid, ownerVisible, eventTick, tick) ||
+        guard->focusAttempted) return 0;
+    guard->focusAttempted = 1;
+    return 1;
 }
 
 static BRIDGE_I32 BridgeWithinAxis(BRIDGE_I32 a, BRIDGE_I32 b)

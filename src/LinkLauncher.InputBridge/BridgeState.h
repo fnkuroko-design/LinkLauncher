@@ -57,7 +57,7 @@ typedef struct BRIDGE_MENU_GUARD
     BRIDGE_I32 ownerShown;
     BRIDGE_U64 targetRoot;
     BRIDGE_U32 startTick;
-    BRIDGE_I32 reserved;
+    BRIDGE_I32 focusAttempted;
 } BRIDGE_MENU_GUARD;
 
 void BridgeMenuGuardClear(BRIDGE_MENU_GUARD *guard);
@@ -69,6 +69,11 @@ BRIDGE_I32 BridgeMenuGuardMatches(const BRIDGE_MENU_GUARD *guard,
 BRIDGE_I32 BridgeMenuGuardMatchesEvent(const BRIDGE_MENU_GUARD *guard,
     BRIDGE_U64 root, BRIDGE_U32 pid, BRIDGE_U32 tid,
     BRIDGE_I32 ownerVisible, BRIDGE_U32 eventTick, BRIDGE_U32 tick);
+BRIDGE_I32 BridgeMenuGuardTakeFocusTransfer(BRIDGE_MENU_GUARD *guard,
+    BRIDGE_U64 root, BRIDGE_U32 pid, BRIDGE_U32 tid,
+    BRIDGE_I32 ownerVisible, BRIDGE_I32 ownerForeground,
+    BRIDGE_I32 buttonsDown, BRIDGE_I32 standardMenuActive,
+    BRIDGE_U32 eventTick, BRIDGE_U32 tick);
 
 void BridgeStateInit(BRIDGE_STATE *state);
 void BridgeStateCancel(BRIDGE_STATE *state);

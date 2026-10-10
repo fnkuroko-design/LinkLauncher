@@ -4,6 +4,7 @@
 #define BRIDGE_MAP_NAME_CAPACITY 96
 #define BRIDGE_GESTURE_BUDGET_MS 75UL
 #define BRIDGE_MENU_CANCEL_BUDGET_MS 25UL
+#define BRIDGE_MENU_FOCUS_WAIT_MS 50UL
 #define BRIDGE_PROBE_MESSAGE (WM_APP + 0x3A)
 #define BRIDGE_PROBE_RIGHT_SEEN 10
 #define BRIDGE_PROBE_LEFT_CANDIDATE 20
@@ -129,6 +130,8 @@ static HHOOK g_callWndHook = NULL;
 #if defined(_WIN64)
 static HWINEVENTHOOK g_menuEventHook = NULL;
 static BOOL g_menuEventCancelling = FALSE;
+static HWND g_menuFocusWindow = NULL;
+static DWORD g_menuFocusEventTick = 0;
 #endif
 #if defined(BRIDGE_INPUT_PROBE) && defined(_WIN64)
 static HHOOK g_getMessageProbeHook = NULL;
@@ -481,9 +484,109 @@ static void CALLBACK BridgeMenuEventProc(HWINEVENTHOOK hook, DWORD event,
             SMTO_ABORTIFHUNG | SMTO_BLOCK, BRIDGE_MENU_CANCEL_BUDGET_MS - elapsed, &result);
         BridgePostTrace(shared, 18, (UINT)event, sent != 0 ? 1UL : 0UL);
     }
+    if (event == EVENT_SYSTEM_MENUPOPUPSTART &&
+        BridgeMenuEventTargetMatches(shared, window, root, pid, tid, eventTick))
+    {
+        /* Synchronous owner-thread scope lets WPF suspend only our temporary
+         * deactivation. The export cannot act without this live event request. */
+        DWORD sequence = 0;
+        if (BridgeTryLock(shared))
+        {
+            sequence = (DWORD)shared->state.sequence;
+            BridgeUnlock(shared);
+        }
+        g_menuFocusWindow = window;
+        g_menuFocusEventTick = eventTick;
+        if (sequence != 0)
+            SendMessageW((HWND)(ULONG_PTR)shared->ownerHwnd, BRIDGE_OWNER_MESSAGE,
+                (WPARAM)sequence, BRIDGE_OWNER_MENU_FOCUS);
+        g_menuFocusWindow = NULL;
+        g_menuFocusEventTick = 0;
+    }
     g_menuEventCancelling = FALSE;
 }
 #endif
+
+UINT __cdecl BridgeRestoreMenuFocus(void)
+{
+#if defined(_WIN64)
+    BRIDGE_SHARED *shared = BridgeEnsureShared();
+    HWND root = NULL;
+    HWND focusRoot = NULL;
+    HWND owner;
+    HWND foreground;
+    DWORD pid = 0;
+    DWORD tid = 0;
+    DWORD focusPid = 0;
+    DWORD focusTid = 0;
+    DWORD ownerTid;
+    DWORD ownerPid = 0;
+    DWORD_PTR ignored = 0;
+    GUITHREADINFO info;
+    LASTINPUTINFO inputBefore;
+    LASTINPUTINFO inputAfter;
+    BOOL take;
+    BOOL buttonsDown;
+    UINT flags = 0;
+    if (!g_menuEventCancelling || g_menuFocusWindow == NULL || shared == NULL ||
+        (DWORD)shared->ownerPid != GetCurrentProcessId() ||
+        !BridgeIsRootTarget(g_menuFocusWindow, &root, &pid, &tid) ||
+        !IsWindowVisible(root)) return 0;
+    owner = (HWND)(ULONG_PTR)shared->ownerHwnd;
+    ownerTid = GetWindowThreadProcessId(owner, &ownerPid);
+    if (ownerTid != GetCurrentThreadId() || ownerPid != GetCurrentProcessId()) return 0;
+    BridgeZeroMemory((volatile unsigned char *)&info, sizeof(info));
+    info.cbSize = (DWORD)sizeof(info);
+    if (!GetGUIThreadInfo(tid, &info)) return 0;
+    buttonsDown = ((USHORT)GetAsyncKeyState(VK_RBUTTON) & 0x8000U) != 0 ||
+        ((USHORT)GetAsyncKeyState(VK_LBUTTON) & 0x8000U) != 0 || BridgeReadOtherButtons() != 0;
+    inputBefore.cbSize = (UINT)sizeof(inputBefore);
+    if (!GetLastInputInfo(&inputBefore) || !BridgeTryLock(shared)) return 0;
+    take = BridgeMenuGuardTakeFocusTransfer(&shared->menuGuard,
+        (BRIDGE_U64)(ULONG_PTR)root, pid, tid, IsWindowVisible(owner),
+        GetForegroundWindow() == owner, buttonsDown,
+        (info.flags & (GUI_INMENUMODE | GUI_POPUPMENUMODE | GUI_SYSTEMMENUMODE)) != 0,
+        g_menuFocusEventTick, GetTickCount());
+    BridgeUnlock(shared);
+    if (!take) return 0;
+    /* Keep our foreground permission for the return leg, rather than merging
+     * input queues, faking activation messages, or changing system settings. */
+    if (!AllowSetForegroundWindow(ownerPid)) return 0;
+    flags |= 8U;
+    if (!BridgeMenuEventTargetMatches(shared, g_menuFocusWindow, root, pid, tid,
+            g_menuFocusEventTick) || GetForegroundWindow() != owner) return flags;
+    flags |= 16U;
+    SetForegroundWindow(root);
+    /* Cross-queue activation is asynchronous. A bounded harmless message
+     * waits for the source to process that activation before the return. */
+    if (SendMessageTimeoutW(root, WM_NULL, 0, 0, SMTO_ABORTIFHUNG | SMTO_BLOCK,
+            BRIDGE_MENU_FOCUS_WAIT_MS, &ignored) != 0 && GetForegroundWindow() == root)
+    {
+        flags |= 1U;
+        BridgeZeroMemory((volatile unsigned char *)&info, sizeof(info));
+        info.cbSize = (DWORD)sizeof(info);
+        if (GetGUIThreadInfo(tid, &info) &&
+            BridgeIsRootTarget(info.hwndFocus, &focusRoot, &focusPid, &focusTid) &&
+            focusRoot == root && focusPid == pid && focusTid == tid) flags |= 2U;
+    }
+    inputAfter.cbSize = (UINT)sizeof(inputAfter);
+    foreground = GetForegroundWindow();
+    if (GetLastInputInfo(&inputAfter) && inputAfter.dwTime == inputBefore.dwTime &&
+        BridgeMenuEventTargetMatches(shared, g_menuFocusWindow, root, pid, tid,
+            g_menuFocusEventTick) && IsWindowVisible(owner) &&
+        (foreground == owner || foreground == root))
+    {
+        /* Also supersede a timed-out asynchronous source activation request. */
+        SetForegroundWindow(owner);
+        if (GetForegroundWindow() == owner) flags |= 4U;
+    }
+    else flags |= 32U; /* New input, hide, stale request or unrelated foreground. */
+    BridgePostTrace(shared, 19, EVENT_SYSTEM_MENUPOPUPSTART, flags);
+    return flags;
+#else
+    return 0;
+#endif
+}
 
 static LRESULT CALLBACK BridgeCallWndProc(int code, WPARAM wParam, LPARAM lParam)
 {
@@ -1450,6 +1553,8 @@ void __cdecl BridgeStop(void)
         g_menuEventHook = NULL;
     }
     g_menuEventCancelling = FALSE;
+    g_menuFocusWindow = NULL;
+    g_menuFocusEventTick = 0;
 #endif
 #if defined(BRIDGE_INPUT_PROBE) && defined(_WIN64)
     if (g_getMessageProbeHook != NULL)

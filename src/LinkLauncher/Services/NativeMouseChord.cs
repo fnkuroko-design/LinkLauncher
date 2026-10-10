@@ -14,6 +14,7 @@ internal sealed class NativeMouseChord : IDisposable
     internal const int NotificationMessage = 0x8039;
     internal const int BeginNotification = 1;
     internal const int CompleteNotification = 2;
+    internal const int MenuFocusNotification = 3;
     private const uint ReadyStatus = 53; // mouse + callwnd menu + WinEvent menu + enabled。
 
     // Unhook直後も既存callbackが終了処理中である可能性があるため、DLLはプロセスの寿命まで保持します。
@@ -69,6 +70,15 @@ internal sealed class NativeMouseChord : IDisposable
         if (!_disposed) _api.ClearMenuGuard();
     }
 
+    internal bool RestoreMenuFocus()
+    {
+        uint result = _disposed ? 0 : _api.RestoreMenuFocus();
+#if INPUT_PROBE
+        ChordInputProbe.Record($"native menu focus result={result}");
+#endif
+        return (result & 4) != 0 && (result & 32) == 0;
+    }
+
     public void Dispose()
     {
         if (_disposed) return;
@@ -90,6 +100,7 @@ internal sealed class NativeMouseChord : IDisposable
         internal readonly InstallFunction Install;
         internal readonly StopFunction Stop;
         internal readonly StopFunction ClearMenuGuard;
+        internal readonly ReadFunction RestoreMenuFocus;
         internal readonly ReadFunction PendingButtons;
         internal readonly ReadFunction Sequence;
         internal readonly ReadFunction Status;
@@ -102,6 +113,7 @@ internal sealed class NativeMouseChord : IDisposable
             Install = Export<InstallFunction>(library, "BridgeInstall");
             Stop = Export<StopFunction>(library, "BridgeStop");
             ClearMenuGuard = Export<StopFunction>(library, "BridgeClearMenuGuard");
+            RestoreMenuFocus = Export<ReadFunction>(library, "BridgeRestoreMenuFocus");
             PendingButtons = Export<ReadFunction>(library, "BridgePendingButtons");
             Sequence = Export<ReadFunction>(library, "BridgeSequence");
             Status = Export<ReadFunction>(library, "BridgeStatus");

@@ -84,6 +84,7 @@ public sealed class DesktopIntegration : IDisposable
     private readonly Action _exit;
     private readonly Action? _showLauncher;
     private readonly Func<Action?>? _captureMouseActivationCompletion;
+    private readonly Func<Func<bool>, bool>? _restoreSourceMenuFocus;
     private readonly MouseActivationCompletion _mouseActivationCompletion = new();
     private readonly Forms.NotifyIcon _notifyIcon;
     private readonly Forms.ContextMenuStrip _trayMenu;
@@ -133,7 +134,8 @@ public sealed class DesktopIntegration : IDisposable
     public string HotkeyLabel => _hotkeyLabel;
 
     public DesktopIntegration(Window window, Action toggle, Action showSettings, Action exit,
-        Action? showLauncher = null, Func<Action?>? captureMouseActivationCompletion = null)
+        Action? showLauncher = null, Func<Action?>? captureMouseActivationCompletion = null,
+        Func<Func<bool>, bool>? restoreSourceMenuFocus = null)
     {
         _window = window ?? throw new ArgumentNullException(nameof(window));
         _toggle = toggle ?? throw new ArgumentNullException(nameof(toggle));
@@ -141,6 +143,7 @@ public sealed class DesktopIntegration : IDisposable
         _exit = exit ?? throw new ArgumentNullException(nameof(exit));
         _showLauncher = showLauncher;
         _captureMouseActivationCompletion = captureMouseActivationCompletion;
+        _restoreSourceMenuFocus = restoreSourceMenuFocus;
         _mouseHookProc = MouseHookCallback;
         _processIntegrityLevel = TryGetProcessIntegrityLevel(GetCurrentProcess(), out uint integrityLevel)
             ? integrityLevel
@@ -547,6 +550,24 @@ public sealed class DesktopIntegration : IDisposable
                 return IntPtr.Zero;
             if (notification == NativeMouseChord.BeginNotification && _nativeMouseChord.TryTakeRequest(sequence))
                 return BeginNativeMouseActivation(sequence);
+            if (notification == NativeMouseChord.MenuFocusNotification && sequence == _nativeChordSequence
+                && _window.IsVisible && _restoreSourceMenuFocus is not null)
+            {
+                CancelMouseActivationCompletion();
+                try
+                {
+                    bool restored = _restoreSourceMenuFocus(_nativeMouseChord.RestoreMenuFocus);
+#if INPUT_PROBE
+                    ChordInputProbe.Record($"native menu focus ui seq={sequence} restored={restored}");
+#endif
+                    return restored ? new IntPtr(1) : IntPtr.Zero;
+                }
+                catch (Exception exception)
+                {
+                    QueueWarning($"元のメニュー取消後の前面復帰に失敗しました: {exception.Message}");
+                    return IntPtr.Zero;
+                }
+            }
             if (notification == NativeMouseChord.CompleteNotification && sequence == _nativeChordSequence
                 && _nativeMouseChord.PendingButtons == 0)
             {

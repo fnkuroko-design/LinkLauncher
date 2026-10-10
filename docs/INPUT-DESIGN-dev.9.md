@@ -196,6 +196,18 @@ MicrosoftのWinUI focus設計資料のWindowed Popups / Light Dismissは、popup
 
 次の候補は、受理済みsourceのpopup開始時だけ実際にsource→本体の活性化を行う、または即時表示を非活性にして最初の本体クリックで通常の活性化を行う方式。前者はsourceへのfocusイベント再発と本体dismiss/前面復帰の管理、後者はクリック前の検索入力の変更を伴う。どちらも未実装。WM_KILLFOCUSを偽造したり、AttachThreadInputで入力状態を共有したり、WM_CLOSEでsource popup窓を強制破壊する処理は追加していない。
 
+### input-n: ユーザー選択による即時表示を維持する前面往復
+
+ユーザーは①「即時表示/検索入力を維持し、元のpopup表示時だけsourceを活性化して本体へ戻す試作」を選択した。mの通知取消に加え、EVENT_SYSTEM_MENUPOPUPSTARTを受けたownerスレッドからのみ実行する。guardのroot/PID/TID/イベント時刻、source窓の生存/表示、本体の表示/前面、全マウスボタンの物理解放を確認する。GUI thread infoで標準menu modeの場合は除外し、既存EndMenuを優先する。guardの旧reservedスロットをfocusAttemptedにして受理ごとに1回に制限する（shared layout/version/sizeは3/136を維持）。
+
+owner通知phase 3の同期scope内からBridgeRestoreMenuFocusを呼ぶ。native側は当該WinEvent callback中のrequestとowner PID/TIDを確認するので、単なるWindowMessageだけでsourceを選んで活性化はできない。開始前にAllowSetForegroundWindowを自分のPIDへ要求し、失敗ならsourceへ移らない。SetForegroundWindow(source root)の後、WM_NULLをSMTO_ABORTIFHUNG | SMTO_BLOCKで最大50msだけ送り、非同期活性化をsourceが処理する機会を与える。sourceの実foregroundとfocus rootを記録し、同じguardが有効・本体表示・元のrootまたは本体がforeground・GetLastInputInfoの時刻が変わっていない場合にだけ本体へのSetForegroundWindowを要求し、実foregroundで復帰結果を確認する。新しい入力や無関係なforegroundを検知した場合は奪い返さない。フォーカス復帰が必ず成功するという保証はしない。
+
+MainWindowはscope中だけDeactivatedによる自動dismissを抑止し、finallyで解除する。pointer-leave pendingはscope後に通常の判定へ戻す。old ActivationCompletionはキャンセルし、復帰成功時はscope前の入力要素にKeyboard.Focusを戻すが、検索文字列/選択をリセットしない。modal、内部menu、順序drag、非表示、古いvisibility generationでは行わない。前面復帰できない場合に第三窓の入力を奪う無期限retryはしない。
+
+マウス/キーの生成、カーソル/ボタン状態操作、AttachThreadInput、偽造focus通知、OS設定変更、popup破壊、app/class例外は追加していない。sourceには実activation/focusイベントが再発する。stage 19の診断flagsはsource foreground 1 / source focus 2 / owner return 4 / return grant 8 / request 16 / abort on changed input/state 32。C#の診断結果とともに正式配布から除去する。API戻り値とメニュー取消成功は区別する。
+
+純状態試験13/13。新caseはボタン保持/別foreground/標準menu/非表示/古いイベント/別rootを拒否し、同一guardの重複を実行せず次の受理では再実行可能なことを確認する。sourceへの実activation/メニューのlight dismiss/検索/最初のクリックは実機で別途必要。
+
 ## 一次資料
 
 - [LowLevelMouseProc](https://learn.microsoft.com/en-us/windows/win32/winmsg/lowlevelmouseproc): 次のフックへの受け渡しと抑止。
@@ -210,6 +222,9 @@ MicrosoftのWinUI focus設計資料のWindowed Popups / Light Dismissは、popup
 - [SetWinEventHook](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwineventhook): out-of-context通知とmessage loop、停止時の解除。
 - [Event Constants](https://learn.microsoft.com/en-us/windows/win32/winauto/event-constants): menu表示イベント。各UIのイベント発生は実際の観測で確認する。
 - [WinUI focus design](https://github.com/microsoft/microsoft-ui-xaml/blob/main/docs/design-notes/focus.md): windowed popupとlight dismissのfocus依存。taskbar固有の実装仕様とは区別する。
+- [SetForegroundWindowと非同期処理](https://devblogs.microsoft.com/oldnewthing/20161118-00/?p=94745): 別queueへの活性化は非同期になり、WM_NULLによるbounded waitと実foreground確認を使う。
+- [AllowSetForegroundWindow](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-allowsetforegroundwindow): foreground権限の付与と新しい入力による失効。
+- [GetLastInputInfo](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getlastinputinfo): session内の最終入力時刻。変化を中止条件に使い、単調増加やボタン解放の証拠とは扱わない。
 - [UI Automation Menu control type](https://learn.microsoft.com/en-us/windows/win32/winauto/uiauto-supportmenucontroltype): Menuに必須のcontrol patternはない。
 - [入力再送の順序](https://devblogs.microsoft.com/oldnewthing/20121206-00/?p=5903): 物理UPと後挿入DOWNの順序が押しっぱなしを生む例。
 - [GetAsyncKeyState](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getasynckeystate): ボタン状態と照会失敗。対象アプリの押下フラグとは区別する。

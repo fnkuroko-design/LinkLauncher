@@ -177,6 +177,13 @@ input-dのChordReleaseChecksは1回実行した。12個のチェックが成功�
 - MicrosoftのXAML設計資料はwindowed popupのlight dismissが元islandのLostFocusに依存すると説明している。本環境taskbar内部の実装そのものを証明するものではないが、既に前面が本体に移った後に元popupが開く観測と整合する。UI Automation Menuには必須のcontrol patternがなく、共通のCollapse/Closeが全メニューで使える保証はない。単に通知を増やす試作を次々と実施しない。
 - 次の候補は実際のフォーカス遷移を使う方式だが、元画面を一瞬活性化して本体へ戻す場合は元アプリのfocus/activationイベントが再発し、前面復帰と本体の自動dismissを整合させる必要がある。表示を即時・非活性にして最初のクリックで活性化する場合は、クリック前の検索入力の体験が変わる。いずれも未実装・未検証で、タスクバーだけの例外や呼び出しボタン変更にはしない。ユーザーの「両立できない部分は実装前に理由と選択肢を説明」の指示に従い、次のUX方針を確認する。
 
+### input-nの実装と純状態確認
+
+- ユーザーは①「即時操作を維持する試作」を選択。対象はBridgeHook/BridgeStateとheader/exports/純試験、NativeMouseChord、DesktopIntegration、MainWindow。編集前に対象・原因・変更・受入条件と前面化が非同期/拒否され得ることを説明した。sourceと本体を実際に活性化し、現在の入力を奪わないguardを設ける方式を実装した。
+- popup開始時の受理済みsource一致、本体表示/前面、物理ボタン全解放、標準menu modeでないことを確認し、guardごとに1回だけ前面往復を試す。元のWM_CANCELMODEとEndMenu、通常右DOWN/UP/ドラッグの仲介は維持する。開始前の自PIDへのforeground権限要求、sourceへのWM_NULL応答待ち50ms、実foreground/focus確認、本体復帰までの入力時刻/guard再照合を追加した。前面復帰の無期限retry、入力生成/カーソル操作/AttachThreadInputは行わない。
+- WPF側は同期scope中のみ自動dismissを抑止しfinallyで復帰、古いactivation completionをキャンセルする。成功時に元の入力要素へfocusを戻し、検索の内容/選択はリセットしない。診断trace kind 19とC# resultは試作限定で正式配布へ残さない。
+- 純状態試験13/13成功。記録は`artifacts/checks/dev9-menu-focus-20261011-023816/result.txt`。実activation/ポップアップ取消/検索入力/最初のクリックは未検証。本体input-m PID 8892を保持し、input-nは別フォルダーへビルドする。ユーザーデータ/設定/スタートアップ登録先は変更しない。
+
 ## 試作の比較と復元
 
 2版の同時起動は単一起動制御でできない。旧dev.8をトレイから終了し、dev.9の試作用EXEを起動する。比較中は設定の保存を行わず、スタートアップ登録先を変更しない。元へ戻す場合はdev.9をトレイから終了し、保持した `artifacts/releases/LinkLauncher-v0.1.2-dev.8-win-x64/LinkLauncher/LinkLauncher.exe` を起動する。

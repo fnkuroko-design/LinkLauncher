@@ -328,10 +328,39 @@ static int CheckQueuedMenuEventBoundaries(void)
     return 1;
 }
 
+static int CheckFocusTransferGuard(void)
+{
+    BRIDGE_MENU_GUARD guard = { 0 };
+    BridgeMenuGuardArm(&guard, 0xD00, 113, 213, 1, 1000);
+    CHECK_VALUE("held physical buttons prevent transfer", BridgeMenuGuardTakeFocusTransfer(&guard,
+        0xD00, 113, 213, 1, 1, 1, 0, 1100, 1200), 0);
+    CHECK_VALUE("other foreground prevents transfer", BridgeMenuGuardTakeFocusTransfer(&guard,
+        0xD00, 113, 213, 1, 0, 0, 0, 1100, 1200), 0);
+    CHECK_VALUE("standard menu does not need focus fallback", BridgeMenuGuardTakeFocusTransfer(&guard,
+        0xD00, 113, 213, 1, 1, 0, 1, 1100, 1200), 0);
+    CHECK_VALUE("hidden launcher prevents transfer", BridgeMenuGuardTakeFocusTransfer(&guard,
+        0xD00, 113, 213, 0, 1, 0, 0, 1100, 1200), 0);
+    CHECK_VALUE("stale event prevents transfer", BridgeMenuGuardTakeFocusTransfer(&guard,
+        0xD00, 113, 213, 1, 1, 0, 0, 999, 1200), 0);
+    CHECK_VALUE("other root prevents transfer", BridgeMenuGuardTakeFocusTransfer(&guard,
+        0xD01, 113, 213, 1, 1, 0, 0, 1100, 1200), 0);
+    CHECK_VALUE("accepted released source transfers once", BridgeMenuGuardTakeFocusTransfer(&guard,
+        0xD00, 113, 213, 1, 1, 0, 0, 1100, 1200), 1);
+    CHECK_VALUE("duplicate event cannot repeat focus pulse", BridgeMenuGuardTakeFocusTransfer(&guard,
+        0xD00, 113, 213, 1, 1, 0, 0, 1101, 1201), 0);
+    BridgeMenuGuardClear(&guard);
+    CHECK_VALUE("new action invalidates fallback", BridgeMenuGuardTakeFocusTransfer(&guard,
+        0xD00, 113, 213, 1, 1, 0, 0, 1102, 1202), 0);
+    BridgeMenuGuardArm(&guard, 0xD00, 113, 213, 1, 1300);
+    CHECK_VALUE("next accepted gesture can transfer again", BridgeMenuGuardTakeFocusTransfer(&guard,
+        0xD00, 113, 213, 1, 1, 0, 0, 1301, 1302), 1);
+    return 1;
+}
+
 int main(void)
 {
     int passed = 0;
-    int total = 12;
+    int total = 13;
     passed += CheckNormalChordLeftUpFirst();
     passed += CheckNormalChordRightUpFirst();
     passed += CheckEarlyUpsBeforeAcknowledgement();
@@ -344,6 +373,7 @@ int main(void)
     passed += CheckMenuHideGestureAndRearm();
     passed += CheckRepeatedCallsWithUndeliveredWindowUps();
     passed += CheckQueuedMenuEventBoundaries();
+    passed += CheckFocusTransferGuard();
     printf("Bridge state checks: %d/%d passed\n", passed, total);
     return passed == total ? 0 : 1;
 }

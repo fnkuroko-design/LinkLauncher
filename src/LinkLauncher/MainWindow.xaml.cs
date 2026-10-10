@@ -100,6 +100,7 @@ public partial class MainWindow : Window
     private bool _launching;
     private bool _categoriesVisible = true;
     private bool _showingLauncher;
+    private bool _menuFocusTransferInProgress;
     private bool _externalDismissPending;
     private bool _pointerLeaveDismissPending;
     private long _pointerLeaveDismissGeneration;
@@ -119,7 +120,7 @@ public partial class MainWindow : Window
         ShowInTaskbar = true;
         Icon = BitmapFrameFromResource();
         _desktop = new DesktopIntegration(this, ToggleLauncher, ShowSettings, Exit, ShowLauncher,
-            CaptureMouseActivationCompletion);
+            CaptureMouseActivationCompletion, RestoreSourceMenuFocus);
         _desktop.Warning += warning => ShowNotice(warning, true);
         _desktop.ExternalButtonDown += OnExternalButtonDown;
         IsVisibleChanged += (_, _) =>
@@ -210,6 +211,34 @@ public partial class MainWindow : Window
         if (_exiting || !IsVisible) return null;
         long generation = _visibilityGeneration;
         return () => RetryActivation(generation);
+    }
+
+    private bool RestoreSourceMenuFocus(Func<bool> restore)
+    {
+        var handle = new WindowInteropHelper(this).Handle;
+        if (_exiting || !IsVisible || _modalDepth > 0 || _menuOpen || IsOrderDragInProgress ||
+            _menuFocusTransferInProgress || !WindowActivation.IsTargetForeground(handle)) return false;
+        var focused = Keyboard.FocusedElement;
+        long generation = _visibilityGeneration;
+        _menuFocusTransferInProgress = true;
+        try
+        {
+            bool returned = restore();
+            if (returned && !_exiting && IsVisible && generation == _visibilityGeneration &&
+                WindowActivation.IsTargetForeground(handle))
+            {
+                // Keep the current field and selection; do not select/reset the search text.
+                if (focused is UIElement element && element.IsVisible && element.IsEnabled)
+                    Keyboard.Focus(element);
+                else SearchBox.Focus();
+            }
+            return returned;
+        }
+        finally
+        {
+            _menuFocusTransferInProgress = false;
+            RequestPendingPointerLeaveDismiss();
+        }
     }
 
     private void RetryActivation(long generation)
@@ -741,6 +770,7 @@ public partial class MainWindow : Window
     private void Window_Deactivated(object? sender, EventArgs e)
     {
         _pressedLinkId = null;
+        if (_menuFocusTransferInProgress) return;
         RequestAutoDismiss();
     }
 
@@ -754,7 +784,7 @@ public partial class MainWindow : Window
 
     private void RequestAutoDismiss()
     {
-        if (!_ready || !IsVisible || _exiting ||
+        if (!_ready || !IsVisible || _exiting || _menuFocusTransferInProgress ||
             (!_library.Settings.DismissOnDeactivate && !_library.Settings.HideOnPointerLeave)) return;
         long generation = _visibilityGeneration;
         if (_queuedDismissGeneration == generation) return;
@@ -762,7 +792,8 @@ public partial class MainWindow : Window
         Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() =>
         {
             if (_queuedDismissGeneration == generation) _queuedDismissGeneration = null;
-            if (generation != _visibilityGeneration || !IsVisible || _exiting || _showingLauncher || _modalDepth > 0 ||
+            if (generation != _visibilityGeneration || !IsVisible || _exiting || _showingLauncher ||
+                _menuFocusTransferInProgress || _modalDepth > 0 ||
                 _pinned || _menuOpen || IsOrderDragInProgress) return;
             if (_library.Settings.DismissOnDeactivate &&
                 (_externalDismissPending || !WindowActivation.IsProcessForeground()))
@@ -789,7 +820,7 @@ public partial class MainWindow : Window
             CancelPointerLeaveDismiss();
             return;
         }
-        if (_showingLauncher || _modalDepth > 0 || _pinned || _menuOpen || IsOrderDragInProgress) return;
+        if (_showingLauncher || _menuFocusTransferInProgress || _modalDepth > 0 || _pinned || _menuOpen || IsOrderDragInProgress) return;
         if (_pointerLeaveDismissTimer.IsEnabled) return;
 
         _pointerLeaveDismissGeneration = _visibilityGeneration;
@@ -805,7 +836,7 @@ public partial class MainWindow : Window
             _pointerLeaveDismissPending = false;
             return;
         }
-        if (_showingLauncher || _modalDepth > 0 || _pinned || _menuOpen || IsOrderDragInProgress) return;
+        if (_showingLauncher || _menuFocusTransferInProgress || _modalDepth > 0 || _pinned || _menuOpen || IsOrderDragInProgress) return;
         if (!IsPointerOutsideLauncherAndOwnedPopups())
         {
             _pointerLeaveDismissPending = false;

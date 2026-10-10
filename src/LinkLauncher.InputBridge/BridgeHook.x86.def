@@ -8,3 +8,4 @@ EXPORTS
     BridgeHasCandidate
     BridgeTakeRequest
     BridgeClearMenuGuard
+    BridgeRestoreMenuFocus
