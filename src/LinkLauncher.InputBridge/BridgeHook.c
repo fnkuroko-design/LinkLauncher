@@ -110,11 +110,11 @@ static volatile BRIDGE_PROBE_STATS g_probeStats = { 0 };
 static LONG BridgeReadOtherButtons(void)
 {
     LONG buttons = 0;
-    if ((GetAsyncKeyState(VK_MBUTTON) & (SHORT)0x8000) != 0)
+    if (((USHORT)GetAsyncKeyState(VK_MBUTTON) & 0x8000U) != 0)
         buttons |= BRIDGE_OTHER_BUTTON_MIDDLE;
-    if ((GetAsyncKeyState(VK_XBUTTON1) & (SHORT)0x8000) != 0)
+    if (((USHORT)GetAsyncKeyState(VK_XBUTTON1) & 0x8000U) != 0)
         buttons |= BRIDGE_OTHER_BUTTON_X1;
-    if ((GetAsyncKeyState(VK_XBUTTON2) & (SHORT)0x8000) != 0)
+    if (((USHORT)GetAsyncKeyState(VK_XBUTTON2) & 0x8000U) != 0)
         buttons |= BRIDGE_OTHER_BUTTON_X2;
     return buttons;
 }
