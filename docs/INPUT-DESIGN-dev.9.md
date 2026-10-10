@@ -188,6 +188,14 @@ mは所有者側スレッドのWINEVENT_OUTOFCONTEXTでEVENT_SYSTEM_MENUSTART/EN
 
 純状態試験は12/12。新しいケースは非同期イベントの受理前/別root/PID/TID/非表示/消去/再受理前の旧イベントとtick wrap/未来時刻を拒否する境界を確認する。Windowsの配送と独自メニューの取消結果はこの試験では確認しない。
 
+### input-mの限界と次の設計判断
+
+タスクバー空白/スタートで元メニューが残るとのユーザー報告に対し、source子窓とrootの両WM_CANCELMODE配送は成功しsource threadのtraceも記録された。mで独自popupを取消できたとは扱わない。デスクトップでの連続呼び出し/最初のボタン/通常右クリックはユーザーが正常と確認した。
+
+MicrosoftのWinUI focus設計資料のWindowed Popups / Light Dismissは、popup自身がWin32 focusを取らず元islandにfocusを維持し、LostFocusでlight dismissする設計とその依存を説明する。本taskbar実装の断定はせず、前面が本体へ移った後にsource popupが開く現象を考える根拠として扱う。通常取消に応じない任意のUIに対し、統一された外部取消APIを確認できていない。UI Automation Menuにはrequired control patternsがないので、UIA Collapse/Window.Closeへ置き換えれば一律解決とは扱わない。
+
+次の候補は、受理済みsourceのpopup開始時だけ実際にsource→本体の活性化を行う、または即時表示を非活性にして最初の本体クリックで通常の活性化を行う方式。前者はsourceへのfocusイベント再発と本体dismiss/前面復帰の管理、後者はクリック前の検索入力の変更を伴う。どちらも未実装。WM_KILLFOCUSを偽造したり、AttachThreadInputで入力状態を共有したり、WM_CLOSEでsource popup窓を強制破壊する処理は追加していない。
+
 ## 一次資料
 
 - [LowLevelMouseProc](https://learn.microsoft.com/en-us/windows/win32/winmsg/lowlevelmouseproc): 次のフックへの受け渡しと抑止。
@@ -201,6 +209,8 @@ mは所有者側スレッドのWINEVENT_OUTOFCONTEXTでEVENT_SYSTEM_MENUSTART/EN
 - [SetWindowsHookExW](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwindowshookexw): 他プロセスのフックと32bit・64bitの制約。
 - [SetWinEventHook](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwineventhook): out-of-context通知とmessage loop、停止時の解除。
 - [Event Constants](https://learn.microsoft.com/en-us/windows/win32/winauto/event-constants): menu表示イベント。各UIのイベント発生は実際の観測で確認する。
+- [WinUI focus design](https://github.com/microsoft/microsoft-ui-xaml/blob/main/docs/design-notes/focus.md): windowed popupとlight dismissのfocus依存。taskbar固有の実装仕様とは区別する。
+- [UI Automation Menu control type](https://learn.microsoft.com/en-us/windows/win32/winauto/uiauto-supportmenucontroltype): Menuに必須のcontrol patternはない。
 - [入力再送の順序](https://devblogs.microsoft.com/oldnewthing/20121206-00/?p=5903): 物理UPと後挿入DOWNの順序が押しっぱなしを生む例。
 - [GetAsyncKeyState](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getasynckeystate): ボタン状態と照会失敗。対象アプリの押下フラグとは区別する。
 - [WM_CANCELMODE](https://learn.microsoft.com/en-us/windows/win32/winmsg/wm-cancelmode): 標準のキャンセル処理の範囲。
