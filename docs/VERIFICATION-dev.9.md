@@ -193,6 +193,13 @@ input-dのChordReleaseChecksは1回実行した。12個のチェックが成功�
 - 対象BridgeHook.cと文書、現在の受理条件、原因候補、変更、受入条件を編集前に説明した。input-oではsource PIDとforeground PIDの一致要求を取り除き、入力先HWND/root/PID/TID/可視rootの再照合と、取消前後のforeground不変条件へ変更する。対象やforegroundが処理中に変わる場合は拒否する。入力生成・座標移動・ボタン状態変更・アプリ別例外は導入しない。純状態遷移、遅延メニューの前面往復とWPFは変更しない。
 - ユーザーが離席し、常駐試作を終了したと報告。rootもLinkLauncherの残存なしを確認した。設定・ユーザーデータ・スタートアップ登録先を変更せず、手動確認が必要な時点で一時停止する。新試作は別フォルダーへ保持し、自動ビルドの成功を実機改善の成功と区別する。
 
+### input-oのビルドと手動確認待ちの一時停止
+
+- ソース`f39d272cc609a706c21bec6c434fa30b2dd07850`からRelease / win-x64 / framework-dependent / InputProbe=trueのpublishが成功。nativeは/W4 /WXでビルドされ、警告・エラー出力なし。純状態ソースと試験は変更しておらず13ケースは再実行しなかった。実機の改善は未確認。
+- 新しい試作は`artifacts/previews/LinkLauncher-v0.1.2-dev.9-input-o-delivery-target-probe/`。アプリ内5バイナリのみ、x64 DLLは17,920 bytes。本体のFileVersionは0.1.2.9、ProductVersionは上記ソースコミットを含む。20ソースのコピー・ハッシュ、5バイナリのSHA-256とpublish.logを外側に保持した。runtimeconfigは.NET 10 Core/Desktopの共有ランタイムを参照する。dev.8 ZIPのSHA-256は従前と一致した。
+- input-nのログ保存コピーと今回のユーザー報告JSONは同じobservationsへ追加保存した。旧成果物を上書きしていない。最後にLinkLauncherの常駐プロセスなしを確認し、input-oは起動せず一時停止する。設定・ユーザーデータ・スタートアップ先の変更、入力生成・カーソル操作・Computer Use、正式ZIP作成、GitHub公開は行っていない。
+- 再開時は記録付きinput-oを1個起動し、スタートボタンで3回、退出で閉じた直後のファイルアイコン上で2回、通常の静止右クリックを1回だけ手動確認する。元メニューの有無、本体の表示・前面・即時検索入力を確認する。未達時は今回追加したforeground診断で原因を分ける。その後に必要なPDF手書き/Codexの通常操作・右ドラッグの少数確認へ進む。戻す場合はinput-oをトレイから終了し、保持したdev.8 EXEを起動する。
+
 ## 試作の比較と復元
 
 2版の同時起動は単一起動制御でできない。旧dev.8をトレイから終了し、dev.9の試作用EXEを起動する。比較中は設定の保存を行わず、スタートアップ登録先を変更しない。元へ戻す場合はdev.9をトレイから終了し、保持した `artifacts/releases/LinkLauncher-v0.1.2-dev.8-win-x64/LinkLauncher/LinkLauncher.exe` を起動する。

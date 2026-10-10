@@ -235,7 +235,8 @@ MainWindowはscope中だけDeactivatedによる自動dismissを抑止し、final
 - [SetForegroundWindow](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setforegroundwindow): 前面化の制限と、条件を満たしても拒否される場合。
 - [Mouse Input Overview](https://learn.microsoft.com/en-us/windows/win32/inputdev/about-mouse-input): 別スレッドの窓への実クリックによる活性化・capture解除。
 - [WM_MOUSEACTIVATE](https://learn.microsoft.com/en-us/windows/win32/inputdev/wm-mouseactivate): 非活性窓への通常クリックによるDOWN前の活性化。
-# input-o: 入力先と前面ウィンドウを分けた受理
+
+## input-o: 入力先と前面ウィンドウを分けた受理
 
 input-nの実機報告では、タスクバー空白の元メニュー抑止と即時検索入力は改善したが、スタートボタンは交互に元メニューが出た。退出で閉じた直後のファイルアイコン上では本体が出ない。ログのseq 2/4/11/17/21はstage 30 detail 1で表示要求前に拒否され、記録された6回のfocus transferはすべて31だった。操作場所と各seqの対応は未確定であり、両症状の原因が確定したとは扱わない。
 
@@ -244,4 +245,3 @@ input-nの実機報告では、タスクバー空白の元メニュー抑止と�
 表示ACK後のsource側前面化も、保存したforegroundが変わっていない場合に要求する。foreground PIDによる制限は設けないが、Windowsによる前面化拒否はあり得る。右DOWNの即時通過、5pxの呼び出し候補判定、通常右UP/ドラッグの通過、受理済みwindow入力の対応、遅延メニュー取消・前面往復とWPFのscopeは変更しない。座標往復・SendInput・ボタンUP生成・アプリ別例外は導入しない。
 
 診断限定のtrace kind 20/21/22は、入力先PIDとforeground PIDが異なるときのforeground HWND/PID/source rootを記録する。正式配布へは残さない。純状態遷移には変更がないので既存13ケースは再実行せず、nativeの警告をエラーにするビルドと本体publishを行う。スタートボタンの連続操作と、退出後のファイルアイコン上での呼び出しはユーザーの手動実機確認まで未合格とする。
-
