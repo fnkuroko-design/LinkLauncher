@@ -869,12 +869,28 @@ static BOOL BridgeReleaseSourceCapture(
     return TRUE;
 }
 
+/* Mouse delivery identifies the gesture source. A background window (or a
+ * window reached just after our Hide) need not own the foreground. Keep the
+ * delivery target alive and reject a foreground change during cancellation. */
+static BOOL BridgeGestureSourceIsCurrent(HWND sourceWindow, HWND sourceRoot,
+    DWORD sourcePid, DWORD sourceTid, HWND sourceForeground)
+{
+    HWND root = NULL;
+    DWORD pid = 0;
+    DWORD tid = 0;
+    return GetForegroundWindow() == sourceForeground &&
+        BridgeIsRootTarget(sourceWindow, &root, &pid, &tid) &&
+        root == sourceRoot && pid == sourcePid && tid == sourceTid &&
+        IsWindowVisible(root);
+}
+
 static BOOL BridgeBeginGesture(
     BRIDGE_SHARED *shared,
     DWORD sequence,
     DWORD sourcePid,
     DWORD sourceTid,
     HWND sourceRoot,
+    HWND sourceWindow,
     HWND sourceForeground,
     BOOL sourceContext,
     DWORD currentTid)
@@ -898,9 +914,15 @@ static BOOL BridgeBeginGesture(
     owner = (HWND)(ULONG_PTR)shared->ownerHwnd;
     ownerPid = (DWORD)shared->ownerPid;
     foreground = GetForegroundWindow();
-    if (owner == NULL || ownerPid == 0 || foreground == NULL ||
-        GetWindowThreadProcessId(foreground, &foregroundPid) == 0 || foregroundPid != sourcePid ||
-        foreground != sourceForeground)
+    if (foreground != NULL) GetWindowThreadProcessId(foreground, &foregroundPid);
+    if (foregroundPid != sourcePid)
+    {
+        BridgePostTrace(shared, 20, 0, (DWORD)(ULONG_PTR)foreground);
+        BridgePostTrace(shared, 21, 0, foregroundPid);
+        BridgePostTrace(shared, 22, 0, (DWORD)(ULONG_PTR)sourceRoot);
+    }
+    if (owner == NULL || ownerPid == 0 ||
+        !BridgeGestureSourceIsCurrent(sourceWindow, sourceRoot, sourcePid, sourceTid, sourceForeground))
     {
         BridgePostProbe(shared, BRIDGE_PROBE_SEND_FAILED, 1);
         BridgeRejectSequence(shared, sequence);
@@ -928,10 +950,7 @@ static BOOL BridgeBeginGesture(
     }
     BridgePostTrace(shared, 5, 0, sourcePid);
 
-    foreground = GetForegroundWindow();
-    foregroundPid = 0;
-    if (foreground == NULL || foreground != sourceForeground ||
-        GetWindowThreadProcessId(foreground, &foregroundPid) == 0 || foregroundPid != sourcePid)
+    if (!BridgeGestureSourceIsCurrent(sourceWindow, sourceRoot, sourcePid, sourceTid, sourceForeground))
     {
         BridgePostProbe(shared, BRIDGE_PROBE_SEND_FAILED, 4);
         BridgeRejectSequence(shared, sequence);
@@ -993,9 +1012,7 @@ static BOOL BridgeBeginGesture(
     if (uiResult == 1)
     {
         foreground = GetForegroundWindow();
-        foregroundPid = 0;
-        if (foreground == sourceForeground &&
-            GetWindowThreadProcessId(foreground, &foregroundPid) != 0 && foregroundPid == sourcePid)
+        if (foreground == sourceForeground)
         {
             promoted = SetForegroundWindow(owner);
         }
@@ -1334,6 +1351,7 @@ static LRESULT CALLBACK BridgeMouseProc(int code, WPARAM wParam, LPARAM lParam)
             targetPid,
             targetTid,
             targetRoot,
+            mouse->hwnd,
             sourceForeground,
             sourceContext,
             currentTid);
