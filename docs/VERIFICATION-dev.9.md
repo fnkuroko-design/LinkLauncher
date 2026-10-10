@@ -183,6 +183,8 @@ input-dのChordReleaseChecksは1回実行した。12個のチェックが成功�
 - popup開始時の受理済みsource一致、本体表示/前面、物理ボタン全解放、標準menu modeでないことを確認し、guardごとに1回だけ前面往復を試す。元のWM_CANCELMODEとEndMenu、通常右DOWN/UP/ドラッグの仲介は維持する。開始前の自PIDへのforeground権限要求、sourceへのWM_NULL応答待ち50ms、実foreground/focus確認、本体復帰までの入力時刻/guard再照合を追加した。前面復帰の無期限retry、入力生成/カーソル操作/AttachThreadInputは行わない。
 - WPF側は同期scope中のみ自動dismissを抑止しfinallyで復帰、古いactivation completionをキャンセルする。成功時に元の入力要素へfocusを戻し、検索の内容/選択はリセットしない。診断trace kind 19とC# resultは試作限定で正式配布へ残さない。
 - 純状態試験13/13成功。記録は`artifacts/checks/dev9-menu-focus-20261011-023816/result.txt`。実activation/ポップアップ取消/検索入力/最初のクリックは未検証。本体input-m PID 8892を保持し、input-nは別フォルダーへビルドする。ユーザーデータ/設定/スタートアップ登録先は変更しない。
+- ソース`e390160`からinput-nをRelease / win-x64 / framework-dependentでpublish成功、警告・エラー出力なし。試作は`artifacts/previews/LinkLauncher-v0.1.2-dev.9-input-n-focus-transfer-probe/`。アプリ内は5バイナリのみ、x64 native DLLは17,408 bytes。MainWindowを含む20ソースのコピーと5バイナリのSHA-256を外側に保持した。旧dev.8 ZIPのSHA-256は従前と一致した。
+- ビルド後に常駐プロセスなしを2回確認したため、追加の終了依頼は行わず記録付きinput-nを起動した。終了理由を推測しない。本体PID 11352が単独常駐、status=53、stage 54/56/55各detail 1。記録先は`observations/20261011-024038-cbc1250415e44cc390e49bca7b51c967/`。起動前後のlibrary.json SHA-256は`5405c9ba22006010051cbc81800ed9d55f0fe2d3c2af41adaaf4fc73c8cc91bc`で一致した。前試作でのユーザー操作中まで不変だったとは扱わない。設定保存・スタートアップ変更・入力生成・カーソル操作・強制終了は行っていない。実機の改善は未確認。
 
 ## 試作の比較と復元
 
