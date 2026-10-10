@@ -8,110 +8,16 @@
 /* Nonzero still means "already attempted" to the pure guard. Value 2 is a
  * short-lived request for the source thread to renew our return permission. */
 #define BRIDGE_FOCUS_RETURN_GRANT_PENDING 2
-#define BRIDGE_PROBE_MESSAGE (WM_APP + 0x3A)
-#define BRIDGE_PROBE_RIGHT_SEEN 10
-#define BRIDGE_PROBE_LEFT_CANDIDATE 20
-#define BRIDGE_PROBE_LEFT_REJECTED 21
-#define BRIDGE_PROBE_SEND_FAILED 30
-#define BRIDGE_PROBE_ACK 31
-#define BRIDGE_PROBE_CAPTURE_FAILED 32
-#define BRIDGE_PROBE_FOREGROUND 40
-#define BRIDGE_PROBE_CONTEXT 41
-#define BRIDGE_TRACE_MESSAGE (WM_APP + 0x3B)
-#define BRIDGE_TRACE_WINDOW_MS 10000UL
 
 #define BRIDGE_OTHER_BUTTON_MIDDLE 0x00000001L
 #define BRIDGE_OTHER_BUTTON_X1 0x00000002L
 #define BRIDGE_OTHER_BUTTON_X2 0x00000004L
-
-enum BRIDGE_PROBE_CAPTURE_FAILURE
-{
-    BRIDGE_PROBE_CAPTURE_FAILURE_SOURCE_THREAD = 1,
-    BRIDGE_PROBE_CAPTURE_FAILURE_SOURCE_WINDOW = 2,
-    BRIDGE_PROBE_CAPTURE_FAILURE_RELEASE = 3,
-    BRIDGE_PROBE_CAPTURE_FAILURE_QUERY = 4,
-    BRIDGE_PROBE_CAPTURE_FAILURE_WINDOW = 5,
-    BRIDGE_PROBE_CAPTURE_FAILURE_BUDGET = 6,
-    BRIDGE_PROBE_CAPTURE_FAILURE_CANCEL = 7,
-    BRIDGE_PROBE_CAPTURE_FAILURE_RECHECK = 8,
-    BRIDGE_PROBE_CAPTURE_FAILURE_REMAINS = 9
-};
 
 #pragma data_seg(".LLCFG")
 static volatile LONG g_cfgOwnerPid = 0;
 static volatile ULONGLONG g_cfgOwnerHwnd = 0;
 #pragma data_seg()
 #pragma comment(linker, "/SECTION:.LLCFG,RWS")
-
-#if defined(BRIDGE_INPUT_PROBE)
-typedef struct BRIDGE_PROBE_STATS
-{
-    volatile LONG callbackTotal;
-    volatile LONG lastCode;
-    volatile LONG lastMessage;
-    volatile LONG hcNoRemove;
-    volatile LONG nonAction;
-    volatile LONG sharedAcquireFailure;
-    volatile LONG ownerPidZero;
-    volatile LONG mapNameFailure;
-    volatile LONG initBusy;
-    volatile LONG openMappingFailure;
-    volatile LONG mapViewFailure;
-    volatile LONG validationFailure;
-    volatile LONG lastSharedFailure;
-    volatile LONG lastMappingError;
-    volatile LONG lastValidationFailure;
-    volatile LONG disabled;
-    volatile LONG nullMouse;
-    volatile LONG targetLookupFailure;
-    volatile LONG contextSkipped;
-    volatile LONG contextAccepted;
-    volatile LONG rightDown;
-    volatile LONG leftDown;
-    volatile LONG up;
-    volatile LONG candidate;
-    volatile LONG rejected;
-    volatile LONG begin;
-    volatile LONG ack;
-    volatile LONG complete;
-    volatile LONG lastTargetPid;
-    volatile LONG lastTargetTid;
-    volatile LONG lastCurrentPid;
-    volatile LONG lastCurrentTid;
-    volatile LONG lockFailure;
-} BRIDGE_PROBE_STATS;
-typedef char BRIDGE_PROBE_SIZE_CHECK[(sizeof(BRIDGE_PROBE_STATS) == 132) ? 1 : -1];
-
-enum BRIDGE_PROBE_SHARED_FAILURE
-{
-    BRIDGE_PROBE_SHARED_FAILURE_NONE = 0,
-    BRIDGE_PROBE_SHARED_FAILURE_OWNER_PID = 1,
-    BRIDGE_PROBE_SHARED_FAILURE_MAP_NAME = 2,
-    BRIDGE_PROBE_SHARED_FAILURE_INIT_BUSY = 3,
-    BRIDGE_PROBE_SHARED_FAILURE_OPEN_MAPPING = 4,
-    BRIDGE_PROBE_SHARED_FAILURE_MAP_VIEW = 5,
-    BRIDGE_PROBE_SHARED_FAILURE_VALIDATION = 6
-};
-
-enum BRIDGE_PROBE_VALIDATION_FAILURE
-{
-    BRIDGE_PROBE_VALIDATION_MAGIC = 1,
-    BRIDGE_PROBE_VALIDATION_VERSION = 2,
-    BRIDGE_PROBE_VALIDATION_SIZE = 3,
-    BRIDGE_PROBE_VALIDATION_OWNER_PID = 4
-};
-
-#pragma data_seg(".LLPRB")
-static volatile BRIDGE_PROBE_STATS g_probeStats = { 0 };
-#pragma data_seg()
-#pragma comment(linker, "/SECTION:.LLPRB,RWS")
-
-#define BRIDGE_PROBE_COUNT(field) InterlockedIncrement(&g_probeStats.field)
-#define BRIDGE_PROBE_SET(field, value) InterlockedExchange(&g_probeStats.field, (LONG)(value))
-#else
-#define BRIDGE_PROBE_COUNT(field) ((void)0)
-#define BRIDGE_PROBE_SET(field, value) ((void)0)
-#endif
 
 #if defined(_WIN64)
 static LONG BridgeReadOtherButtons(void)
@@ -135,10 +41,6 @@ static HWINEVENTHOOK g_menuEventHook = NULL;
 static BOOL g_menuEventCancelling = FALSE;
 static HWND g_menuFocusWindow = NULL;
 static DWORD g_menuFocusEventTick = 0;
-#endif
-#if defined(BRIDGE_INPUT_PROBE) && defined(_WIN64)
-static HHOOK g_getMessageProbeHook = NULL;
-static BOOL g_probeNextMove = FALSE;
 #endif
 static HANDLE g_mapping = NULL;
 static BRIDGE_SHARED *g_shared = NULL;
@@ -221,49 +123,29 @@ static BRIDGE_SHARED *BridgeEnsureShared(void)
     if (state == 2) return g_shared;
     if (InterlockedCompareExchange(&g_mapInitState, 1, 0) != 0)
     {
-        BRIDGE_PROBE_COUNT(sharedAcquireFailure);
-        BRIDGE_PROBE_COUNT(initBusy);
-        BRIDGE_PROBE_SET(lastSharedFailure, BRIDGE_PROBE_SHARED_FAILURE_INIT_BUSY);
-        BRIDGE_PROBE_SET(lastMappingError, 0);
         return NULL;
     }
 
     ownerPid = InterlockedCompareExchange(&g_cfgOwnerPid, 0, 0);
     if (ownerPid <= 0)
     {
-        BRIDGE_PROBE_COUNT(sharedAcquireFailure);
-        BRIDGE_PROBE_COUNT(ownerPidZero);
-        BRIDGE_PROBE_SET(lastSharedFailure, BRIDGE_PROBE_SHARED_FAILURE_OWNER_PID);
-        BRIDGE_PROBE_SET(lastMappingError, 0);
         InterlockedExchange(&g_mapInitState, 0);
         return NULL;
     }
     if (!BridgeMakeMapName((DWORD)ownerPid, mapName, BRIDGE_MAP_NAME_CAPACITY))
     {
-        BRIDGE_PROBE_COUNT(sharedAcquireFailure);
-        BRIDGE_PROBE_COUNT(mapNameFailure);
-        BRIDGE_PROBE_SET(lastSharedFailure, BRIDGE_PROBE_SHARED_FAILURE_MAP_NAME);
-        BRIDGE_PROBE_SET(lastMappingError, 0);
         InterlockedExchange(&g_mapInitState, 0);
         return NULL;
     }
     mapping = OpenFileMappingW(FILE_MAP_READ | FILE_MAP_WRITE, FALSE, mapName);
     if (mapping == NULL)
     {
-        BRIDGE_PROBE_COUNT(sharedAcquireFailure);
-        BRIDGE_PROBE_COUNT(openMappingFailure);
-        BRIDGE_PROBE_SET(lastSharedFailure, BRIDGE_PROBE_SHARED_FAILURE_OPEN_MAPPING);
-        BRIDGE_PROBE_SET(lastMappingError, GetLastError());
         InterlockedExchange(&g_mapInitState, 0);
         return NULL;
     }
     shared = (BRIDGE_SHARED *)MapViewOfFile(mapping, FILE_MAP_READ | FILE_MAP_WRITE, 0, 0, sizeof(BRIDGE_SHARED));
     if (shared == NULL)
     {
-        BRIDGE_PROBE_COUNT(sharedAcquireFailure);
-        BRIDGE_PROBE_COUNT(mapViewFailure);
-        BRIDGE_PROBE_SET(lastSharedFailure, BRIDGE_PROBE_SHARED_FAILURE_MAP_VIEW);
-        BRIDGE_PROBE_SET(lastMappingError, GetLastError());
         CloseHandle(mapping);
         InterlockedExchange(&g_mapInitState, 0);
         return NULL;
@@ -272,20 +154,6 @@ static BRIDGE_SHARED *BridgeEnsureShared(void)
         shared->version != (LONG)BRIDGE_SHARED_VERSION ||
         shared->byteSize != (LONG)sizeof(BRIDGE_SHARED) || shared->ownerPid != ownerPid)
     {
-#if defined(BRIDGE_INPUT_PROBE)
-        LONG validationFailure = shared->magic != (LONG)BRIDGE_SHARED_MAGIC
-            ? BRIDGE_PROBE_VALIDATION_MAGIC
-            : (shared->version != (LONG)BRIDGE_SHARED_VERSION
-                ? BRIDGE_PROBE_VALIDATION_VERSION
-                : (shared->byteSize != (LONG)sizeof(BRIDGE_SHARED)
-                    ? BRIDGE_PROBE_VALIDATION_SIZE
-                    : BRIDGE_PROBE_VALIDATION_OWNER_PID));
-        BRIDGE_PROBE_COUNT(sharedAcquireFailure);
-        BRIDGE_PROBE_COUNT(validationFailure);
-        BRIDGE_PROBE_SET(lastSharedFailure, BRIDGE_PROBE_SHARED_FAILURE_VALIDATION);
-        BRIDGE_PROBE_SET(lastMappingError, 0);
-        BRIDGE_PROBE_SET(lastValidationFailure, validationFailure);
-#endif
         UnmapViewOfFile(shared);
         CloseHandle(mapping);
         InterlockedExchange(&g_mapInitState, 0);
@@ -305,75 +173,12 @@ static void BridgePostOwnerMessage(BRIDGE_SHARED *shared, DWORD sequence, LPARAM
     {
         return;
     }
-#if defined(BRIDGE_INPUT_PROBE)
-    if (phase == BRIDGE_OWNER_COMPLETE) BRIDGE_PROBE_COUNT(complete);
-#endif
     owner = (HWND)(ULONG_PTR)shared->ownerHwnd;
     if (owner != NULL)
     {
         PostMessageW(owner, BRIDGE_OWNER_MESSAGE, (WPARAM)sequence, phase);
     }
 }
-
-#if defined(BRIDGE_INPUT_PROBE)
-static void BridgePostProbe(BRIDGE_SHARED *shared, WPARAM stage, LPARAM detail)
-{
-    HWND owner;
-    if (shared == NULL || InterlockedCompareExchange(&shared->enabled, 0, 0) == 0) return;
-    owner = (HWND)(ULONG_PTR)shared->ownerHwnd;
-    if (owner != NULL) PostMessageW(owner, BRIDGE_PROBE_MESSAGE, stage, detail);
-}
-
-/* Temporary passive ordering trace. Shared only by this preview DLL's copies. */
-#pragma data_seg(".LLTRC")
-static volatile LONG g_tracePid = 0;
-static volatile LONG g_traceTid = 0;
-static volatile LONG g_traceTick = 0;
-#pragma data_seg()
-#pragma comment(linker, "/SECTION:.LLTRC,RWS")
-
-#if defined(_WIN64)
-static BOOL BridgeTraceIsCurrent(DWORD pid, DWORD tid)
-{
-    DWORD traceTick = (DWORD)InterlockedCompareExchange(&g_traceTick, 0, 0);
-    return pid == (DWORD)InterlockedCompareExchange(&g_tracePid, 0, 0) &&
-        tid == (DWORD)InterlockedCompareExchange(&g_traceTid, 0, 0) &&
-        (DWORD)(GetTickCount() - traceTick) <= BRIDGE_TRACE_WINDOW_MS;
-}
-#endif
-
-static void BridgeStartTrace(DWORD pid, DWORD tid)
-{
-    InterlockedExchange(&g_traceTick, (LONG)GetTickCount());
-    InterlockedExchange(&g_traceTid, (LONG)tid);
-    InterlockedExchange(&g_tracePid, (LONG)pid);
-}
-
-static void BridgePostTrace(BRIDGE_SHARED *shared, UINT kind, UINT message, DWORD detail)
-{
-#if defined(_WIN64)
-    HWND owner;
-    ULONGLONG payload;
-    if (shared == NULL || InterlockedCompareExchange(&shared->enabled, 0, 0) == 0) return;
-    if (InterlockedCompareExchange(&g_tracePid, 0, 0) == 0 ||
-        (DWORD)(GetTickCount() - (DWORD)InterlockedCompareExchange(&g_traceTick, 0, 0)) > BRIDGE_TRACE_WINDOW_MS ||
-        (GetCurrentProcessId() != (DWORD)InterlockedCompareExchange(&g_tracePid, 0, 0) &&
-            GetCurrentProcessId() != (DWORD)shared->ownerPid)) return;
-    owner = (HWND)(ULONG_PTR)shared->ownerHwnd;
-    payload = ((ULONGLONG)GetTickCount() << 32) | (ULONGLONG)detail;
-    if (owner != NULL)
-        PostMessageW(owner, BRIDGE_TRACE_MESSAGE,
-            (WPARAM)((kind << 16) | (message & 0xffffU)), (LPARAM)payload);
-#else
-    (void)shared; (void)kind; (void)message; (void)detail;
-#endif
-}
-
-#else
-#define BridgePostProbe(shared, stage, detail) ((void)0)
-#define BridgeStartTrace(pid, tid) ((void)0)
-#define BridgePostTrace(shared, kind, message, detail) ((void)0)
-#endif
 
 static BOOL BridgeIsRootTarget(HWND window, HWND *root, DWORD *pid, DWORD *tid)
 {
@@ -390,47 +195,6 @@ static BOOL BridgeIsRootTarget(HWND window, HWND *root, DWORD *pid, DWORD *tid)
     if (tid != NULL) *tid = targetTid;
     return TRUE;
 }
-
-#if defined(BRIDGE_INPUT_PROBE) && defined(_WIN64)
-/* Read queued pointer/mouse paths only. Do not modify or consume any MSG. */
-static LRESULT CALLBACK BridgeGetMessageProbeProc(int code, WPARAM wParam, LPARAM lParam)
-{
-    if (code == HC_ACTION && wParam == PM_REMOVE && lParam != 0 &&
-        BridgeTraceIsCurrent(GetCurrentProcessId(),
-            (DWORD)InterlockedCompareExchange(&g_traceTid, 0, 0)))
-    {
-        const MSG *event = (const MSG *)lParam;
-        BOOL record = FALSE;
-        switch (event->message)
-        {
-        case WM_RBUTTONDOWN: case WM_RBUTTONUP: case WM_LBUTTONDOWN: case WM_LBUTTONUP:
-        case WM_NCRBUTTONDOWN: case WM_NCRBUTTONUP: case WM_NCLBUTTONDOWN: case WM_NCLBUTTONUP:
-        case WM_CONTEXTMENU: case WM_POINTERDOWN: case WM_POINTERUP: case WM_POINTERCAPTURECHANGED:
-            record = TRUE;
-            break;
-        case WM_MOUSEMOVE: case WM_NCMOUSEMOVE: case WM_POINTERUPDATE:
-            if (g_probeNextMove) { record = TRUE; g_probeNextMove = FALSE; }
-            break;
-        default:
-            break;
-        }
-        if (event->message == WM_RBUTTONUP || event->message == WM_NCRBUTTONUP ||
-            event->message == WM_POINTERUP) g_probeNextMove = TRUE;
-        if (event->message == WM_RBUTTONDOWN || event->message == WM_NCRBUTTONDOWN ||
-            event->message == WM_POINTERDOWN) g_probeNextMove = FALSE;
-        if (record)
-        {
-            BRIDGE_SHARED *shared = BridgeEnsureShared();
-            HWND root = NULL;
-            BridgePostTrace(shared, 14, event->message, (DWORD)event->wParam);
-            if (event->hwnd != NULL) root = GetAncestor(event->hwnd, GA_ROOT);
-            BridgePostTrace(shared, 15, event->message, (DWORD)(ULONG_PTR)root);
-            BridgePostTrace(shared, 16, event->message, GetCurrentThreadId());
-        }
-    }
-    return CallNextHookEx(NULL, code, wParam, lParam);
-}
-#endif
 
 #if defined(_WIN64)
 static BOOL BridgeMenuEventTargetMatches(BRIDGE_SHARED *shared, HWND window,
@@ -466,7 +230,6 @@ static void CALLBACK BridgeMenuEventProc(HWINEVENTHOOK hook, DWORD event,
     DWORD started;
     DWORD elapsed;
     DWORD_PTR result = 0;
-    LRESULT sent;
     (void)hook; (void)objectId; (void)childId;
     if ((event != EVENT_SYSTEM_MENUSTART && event != EVENT_SYSTEM_MENUPOPUPSTART) ||
         window == NULL || g_menuEventCancelling ||
@@ -476,16 +239,14 @@ static void CALLBACK BridgeMenuEventProc(HWINEVENTHOOK hook, DWORD event,
     if (!BridgeMenuEventTargetMatches(shared, window, root, pid, tid, eventTick)) return;
     started = GetTickCount();
     g_menuEventCancelling = TRUE;
-    sent = SendMessageTimeoutW(window, WM_CANCELMODE, 0, 0,
+    SendMessageTimeoutW(window, WM_CANCELMODE, 0, 0,
         SMTO_ABORTIFHUNG | SMTO_BLOCK, BRIDGE_MENU_CANCEL_BUDGET_MS, &result);
-    BridgePostTrace(shared, 17, (UINT)event, sent != 0 ? 1UL : 0UL);
     elapsed = GetTickCount() - started;
     if (window != root && elapsed < BRIDGE_MENU_CANCEL_BUDGET_MS &&
         BridgeMenuEventTargetMatches(shared, root, root, pid, tid, eventTick))
     {
-        sent = SendMessageTimeoutW(root, WM_CANCELMODE, 0, 0,
+        SendMessageTimeoutW(root, WM_CANCELMODE, 0, 0,
             SMTO_ABORTIFHUNG | SMTO_BLOCK, BRIDGE_MENU_CANCEL_BUDGET_MS - elapsed, &result);
-        BridgePostTrace(shared, 18, (UINT)event, sent != 0 ? 1UL : 0UL);
     }
     if (event == EVENT_SYSTEM_MENUPOPUPSTART &&
         BridgeMenuEventTargetMatches(shared, window, root, pid, tid, eventTick))
@@ -600,7 +361,6 @@ UINT __cdecl BridgeRestoreMenuFocus(void)
         if (GetForegroundWindow() == owner) flags |= 4U;
     }
     else flags |= 32U; /* New input, hide, stale request or unrelated foreground. */
-    BridgePostTrace(shared, 19, EVENT_SYSTEM_MENUPOPUPSTART, flags);
     return flags;
 #else
     return 0;
@@ -644,23 +404,8 @@ static LRESULT CALLBACK BridgeCallWndProc(int code, WPARAM wParam, LPARAM lParam
             }
             if (grantReturn)
             {
-                BOOL granted = AllowSetForegroundWindow((DWORD)shared->ownerPid);
-                BridgePostTrace(shared, 23, WM_NULL, granted ? 1UL : 0UL);
+                AllowSetForegroundWindow((DWORD)shared->ownerPid);
             }
-        }
-#endif
-#if defined(BRIDGE_INPUT_PROBE) && defined(_WIN64)
-        switch (event->message)
-        {
-        case WM_RBUTTONDOWN: case WM_RBUTTONUP:
-        case WM_LBUTTONDOWN: case WM_LBUTTONUP:
-        case WM_CONTEXTMENU: case WM_CANCELMODE: case WM_CAPTURECHANGED:
-        case WM_ENTERMENULOOP: case WM_EXITMENULOOP: case WM_INITMENUPOPUP:
-            if (BridgeTraceIsCurrent(GetCurrentProcessId(), GetCurrentThreadId()))
-                BridgePostTrace(BridgeEnsureShared(), 1, event->message, GetCurrentProcessId());
-            break;
-        default:
-            break;
         }
 #endif
         /* Standard keyboard context menus are a new user action too. */
@@ -688,10 +433,6 @@ static LRESULT CALLBACK BridgeCallWndProc(int code, WPARAM wParam, LPARAM lParam
             DWORD tid = 0;
             BOOL cancelMenu = FALSE;
             BOOL ownerVisible;
-#if defined(BRIDGE_INPUT_PROBE)
-            BOOL probeMenu = FALSE;
-            DWORD detail = 0;
-#endif
             shared = BridgeEnsureShared();
             ownerVisible = shared != NULL && IsWindowVisible((HWND)(ULONG_PTR)shared->ownerHwnd);
             if (shared != NULL &&
@@ -703,30 +444,11 @@ static LRESULT CALLBACK BridgeCallWndProc(int code, WPARAM wParam, LPARAM lParam
             {
                 cancelMenu = BridgeMenuGuardMatches(&shared->menuGuard,
                     (BRIDGE_U64)(ULONG_PTR)root, pid, tid, ownerVisible, GetTickCount());
-#if defined(BRIDGE_INPUT_PROBE)
-                if (shared->menuGuard.valid && (DWORD)shared->menuGuard.targetPid == pid)
-                {
-                    probeMenu = TRUE;
-                    detail = (cancelMenu ? 1UL : 0UL) |
-                        (ownerVisible ? 2UL : 0UL) |
-                        (shared->menuGuard.targetRoot == (BRIDGE_U64)(ULONG_PTR)root ? 4UL : 0UL) |
-                        ((DWORD)shared->menuGuard.targetTid == tid ? 8UL : 0UL);
-                }
-#endif
                 BridgeUnlock(shared);
             }
-#if defined(BRIDGE_INPUT_PROBE)
-            if (probeMenu)
-            {
-                BridgePostTrace(shared, 8, event->message, detail);
-                BridgePostTrace(shared, 9, event->message, (DWORD)(ULONG_PTR)root);
-                BridgePostTrace(shared, 10, event->message, tid);
-            }
-#endif
             if (cancelMenu)
             {
-                BOOL ended = EndMenu();
-                BridgePostTrace(shared, 7, event->message, ended ? 1UL : 0UL);
+                EndMenu();
             }
         }
     }
@@ -820,15 +542,12 @@ static BOOL BridgeReleaseSourceCapture(
     HWND sourceRoot,
     BOOL sourceContext,
     DWORD currentTid,
-    DWORD startTick,
-    LONG *failureDetail)
+    DWORD startTick)
 {
     HWND capture;
     HWND captureRoot = NULL;
     DWORD capturePid = 0;
     DWORD captureTid = 0;
-
-    if (failureDetail != NULL) *failureDetail = 0;
 
     if (sourceContext)
     {
@@ -836,7 +555,6 @@ static BOOL BridgeReleaseSourceCapture(
         DWORD_PTR cancelResult = 0;
         if (currentTid != sourceTid)
         {
-            if (failureDetail != NULL) *failureDetail = BRIDGE_PROBE_CAPTURE_FAILURE_SOURCE_THREAD;
             return FALSE;
         }
         capture = GetCapture();
@@ -844,13 +562,11 @@ static BOOL BridgeReleaseSourceCapture(
         if (!BridgeIsRootTarget(capture, &captureRoot, &capturePid, &captureTid) ||
             capturePid != sourcePid || captureTid != sourceTid || captureRoot != sourceRoot)
         {
-            if (failureDetail != NULL) *failureDetail = BRIDGE_PROBE_CAPTURE_FAILURE_SOURCE_WINDOW;
             return FALSE;
         }
         remaining = BridgeRemainingGestureBudget(startTick);
         if (remaining == 0)
         {
-            if (failureDetail != NULL) *failureDetail = BRIDGE_PROBE_CAPTURE_FAILURE_BUDGET;
             return FALSE;
         }
         /* ReleaseCapture alone can complete a pending right-click gesture.
@@ -858,12 +574,10 @@ static BOOL BridgeReleaseSourceCapture(
         if (SendMessageTimeoutW(capture, WM_CANCELMODE, 0, 0,
                 SMTO_ABORTIFHUNG, remaining, &cancelResult) == 0)
         {
-            if (failureDetail != NULL) *failureDetail = BRIDGE_PROBE_CAPTURE_FAILURE_CANCEL;
             return FALSE;
         }
         if (GetCapture() != NULL)
         {
-            if (failureDetail != NULL) *failureDetail = BRIDGE_PROBE_CAPTURE_FAILURE_REMAINS;
             return FALSE;
         }
         return TRUE;
@@ -878,7 +592,6 @@ static BOOL BridgeReleaseSourceCapture(
         info.cbSize = (DWORD)sizeof(info);
         if (!GetGUIThreadInfo(sourceTid, &info))
         {
-            if (failureDetail != NULL) *failureDetail = BRIDGE_PROBE_CAPTURE_FAILURE_QUERY;
             return FALSE;
         }
         capture = info.hwndCapture;
@@ -886,13 +599,11 @@ static BOOL BridgeReleaseSourceCapture(
         if (!BridgeIsRootTarget(capture, &captureRoot, &capturePid, &captureTid) ||
             capturePid != sourcePid || captureTid != sourceTid || captureRoot != sourceRoot)
         {
-            if (failureDetail != NULL) *failureDetail = BRIDGE_PROBE_CAPTURE_FAILURE_WINDOW;
             return FALSE;
         }
         remaining = BridgeRemainingGestureBudget(startTick);
         if (remaining == 0)
         {
-            if (failureDetail != NULL) *failureDetail = BRIDGE_PROBE_CAPTURE_FAILURE_BUDGET;
             return FALSE;
         }
         if (SendMessageTimeoutW(
@@ -904,7 +615,6 @@ static BOOL BridgeReleaseSourceCapture(
                 remaining,
                 &cancelResult) == 0)
         {
-            if (failureDetail != NULL) *failureDetail = BRIDGE_PROBE_CAPTURE_FAILURE_CANCEL;
             return FALSE;
         }
 
@@ -912,12 +622,10 @@ static BOOL BridgeReleaseSourceCapture(
         info.cbSize = (DWORD)sizeof(info);
         if (!GetGUIThreadInfo(sourceTid, &info))
         {
-            if (failureDetail != NULL) *failureDetail = BRIDGE_PROBE_CAPTURE_FAILURE_RECHECK;
             return FALSE;
         }
         if (info.hwndCapture != NULL)
         {
-            if (failureDetail != NULL) *failureDetail = BRIDGE_PROBE_CAPTURE_FAILURE_REMAINS;
             return FALSE;
         }
     }
@@ -950,7 +658,6 @@ static BOOL BridgeBeginGesture(
     BOOL sourceContext,
     DWORD currentTid)
 {
-    DWORD foregroundPid = 0;
     DWORD_PTR uiResult = 0;
     DWORD_PTR sendResult;
     HWND foreground;
@@ -963,23 +670,14 @@ static BOOL BridgeBeginGesture(
     LONG completedSequence = 0;
     DWORD tick;
     DWORD startTick = GetTickCount();
-    LONG captureFailure = 0;
 
     if (shared == NULL || sequence == 0) return FALSE;
     owner = (HWND)(ULONG_PTR)shared->ownerHwnd;
     ownerPid = (DWORD)shared->ownerPid;
     foreground = GetForegroundWindow();
-    if (foreground != NULL) GetWindowThreadProcessId(foreground, &foregroundPid);
-    if (foregroundPid != sourcePid)
-    {
-        BridgePostTrace(shared, 20, 0, (DWORD)(ULONG_PTR)foreground);
-        BridgePostTrace(shared, 21, 0, foregroundPid);
-        BridgePostTrace(shared, 22, 0, (DWORD)(ULONG_PTR)sourceRoot);
-    }
     if (owner == NULL || ownerPid == 0 ||
         !BridgeGestureSourceIsCurrent(sourceWindow, sourceRoot, sourcePid, sourceTid, sourceForeground))
     {
-        BridgePostProbe(shared, BRIDGE_PROBE_SEND_FAILED, 1);
         BridgeRejectSequence(shared, sequence);
         return FALSE;
     }
@@ -989,25 +687,20 @@ static BOOL BridgeBeginGesture(
         AllowSetForegroundWindow(ownerPid);
     }
 
-    BridgePostTrace(shared, 4, 0, sourcePid);
     if (!BridgeReleaseSourceCapture(
             sourcePid,
             sourceTid,
             sourceRoot,
             sourceContext,
             currentTid,
-            startTick,
-            &captureFailure))
+            startTick))
     {
-        BridgePostProbe(shared, BRIDGE_PROBE_CAPTURE_FAILED, captureFailure);
         BridgeRejectSequence(shared, sequence);
         return FALSE;
     }
-    BridgePostTrace(shared, 5, 0, sourcePid);
 
     if (!BridgeGestureSourceIsCurrent(sourceWindow, sourceRoot, sourcePid, sourceTid, sourceForeground))
     {
-        BridgePostProbe(shared, BRIDGE_PROBE_SEND_FAILED, 4);
         BridgeRejectSequence(shared, sequence);
         return FALSE;
     }
@@ -1053,16 +746,9 @@ static BOOL BridgeBeginGesture(
 
     if (!accepted)
     {
-        BridgePostProbe(shared, BRIDGE_PROBE_SEND_FAILED,
-            sendResult == 0 ? (remaining == 0 ? 5 : 2) : 3);
         BridgeRejectSequence(shared, sequence);
         return FALSE;
     }
-
-    BRIDGE_PROBE_COUNT(ack);
-    BridgePostProbe(shared, BRIDGE_PROBE_ACK, (LPARAM)uiResult);
-    BridgePostTrace(shared, 11, 0, (DWORD)(ULONG_PTR)sourceRoot);
-    BridgePostTrace(shared, 12, 0, sourceTid);
 
     if (uiResult == 1)
     {
@@ -1077,8 +763,6 @@ static BOOL BridgeBeginGesture(
         shared->statusBits |= (LONG)BRIDGE_STATUS_FOREGROUND_PROMOTED;
         BridgeUnlock(shared);
     }
-    BridgePostProbe(shared, BRIDGE_PROBE_FOREGROUND,
-        uiResult == 2 ? 2 : (promoted ? 1 : 0));
     if (completedSequence != 0)
     {
         BridgePostOwnerMessage(shared, (DWORD)completedSequence, BRIDGE_OWNER_COMPLETE);
@@ -1103,7 +787,6 @@ static LRESULT CALLBACK BridgeMouseProc(int code, WPARAM wParam, LPARAM lParam)
     LONG expiredSequence = 0;
     LONG supersededSequence = 0;
     LONG sequence = 0;
-    LONG rejectionDetail = 0;
     BOOL targetMatches = FALSE;
     BOOL sourceContext;
     BOOL beginAccepted;
@@ -1111,9 +794,7 @@ static LRESULT CALLBACK BridgeMouseProc(int code, WPARAM wParam, LPARAM lParam)
     BOOL queuedRightDown = FALSE;
     BOOL queuedOtherButtons = FALSE;
     BOOL hadCandidate = FALSE;
-    BOOL candidateStarted = FALSE;
     BOOL activeCancelled = FALSE;
-    BOOL probeLeft = FALSE;
     BOOL otherButtonDown = FALSE;
     LONG otherButton = 0;
 
@@ -1121,26 +802,12 @@ static LRESULT CALLBACK BridgeMouseProc(int code, WPARAM wParam, LPARAM lParam)
     {
         return CallNextHookEx(NULL, code, wParam, lParam);
     }
-#if defined(BRIDGE_INPUT_PROBE)
-    BRIDGE_PROBE_COUNT(callbackTotal);
-    BRIDGE_PROBE_SET(lastCode, code);
-    BRIDGE_PROBE_SET(lastMessage, (UINT)wParam);
-#endif
     if (code == HC_NOREMOVE)
     {
-        BRIDGE_PROBE_COUNT(hcNoRemove);
-#if defined(BRIDGE_INPUT_PROBE) && defined(_WIN64)
-        if (lParam != 0 &&
-            (BridgeIsRightDown((UINT)wParam) || BridgeIsLeftDown((UINT)wParam) ||
-                BridgeIsRightUp((UINT)wParam) || BridgeIsLeftUp((UINT)wParam)) &&
-            BridgeTraceIsCurrent(GetCurrentProcessId(), GetCurrentThreadId()))
-            BridgePostTrace(BridgeEnsureShared(), 2, (UINT)wParam, GetCurrentProcessId());
-#endif
         return CallNextHookEx(NULL, code, wParam, lParam);
     }
     if (code != HC_ACTION)
     {
-        BRIDGE_PROBE_COUNT(nonAction);
         return CallNextHookEx(NULL, code, wParam, lParam);
     }
 
@@ -1151,14 +818,12 @@ static LRESULT CALLBACK BridgeMouseProc(int code, WPARAM wParam, LPARAM lParam)
     }
     if (InterlockedCompareExchange(&shared->enabled, 0, 0) == 0)
     {
-        BRIDGE_PROBE_COUNT(disabled);
         return CallNextHookEx(NULL, code, wParam, lParam);
     }
 
     mouse = (MOUSEHOOKSTRUCT *)lParam;
     if (mouse == NULL)
     {
-        BRIDGE_PROBE_COUNT(nullMouse);
         return CallNextHookEx(NULL, code, wParam, lParam);
     }
 
@@ -1166,7 +831,6 @@ static LRESULT CALLBACK BridgeMouseProc(int code, WPARAM wParam, LPARAM lParam)
     {
         if (!BridgeTryLock(shared))
         {
-            BRIDGE_PROBE_COUNT(lockFailure);
             return CallNextHookEx(NULL, code, wParam, lParam);
         }
         if (otherButtonDown) shared->otherButtons |= otherButton;
@@ -1181,27 +845,13 @@ static LRESULT CALLBACK BridgeMouseProc(int code, WPARAM wParam, LPARAM lParam)
 
     if (!BridgeIsRootTarget(mouse->hwnd, &targetRoot, &targetPid, &targetTid))
     {
-        BRIDGE_PROBE_COUNT(targetLookupFailure);
-        BRIDGE_PROBE_SET(lastTargetPid, 0);
-        BRIDGE_PROBE_SET(lastTargetTid, 0);
-        BRIDGE_PROBE_SET(lastCurrentPid, 0);
-        BRIDGE_PROBE_SET(lastCurrentTid, 0);
         return CallNextHookEx(NULL, code, wParam, lParam);
     }
     currentPid = GetCurrentProcessId();
     currentTid = GetCurrentThreadId();
     sourceContext = targetPid == currentPid && targetTid == currentTid;
-    BRIDGE_PROBE_SET(lastTargetPid, targetPid);
-    BRIDGE_PROBE_SET(lastTargetTid, targetTid);
-    BRIDGE_PROBE_SET(lastCurrentPid, currentPid);
-    BRIDGE_PROBE_SET(lastCurrentTid, currentTid);
-    if (sourceContext)
+    if (!sourceContext)
     {
-        BRIDGE_PROBE_COUNT(contextAccepted);
-    }
-    else
-    {
-        BRIDGE_PROBE_COUNT(contextSkipped);
 #if !defined(_WIN64)
         return CallNextHookEx(NULL, code, wParam, lParam);
 #else
@@ -1216,7 +866,6 @@ static LRESULT CALLBACK BridgeMouseProc(int code, WPARAM wParam, LPARAM lParam)
     {
         if (!BridgeTryLock(shared))
         {
-            BRIDGE_PROBE_COUNT(lockFailure);
             return CallNextHookEx(NULL, code, wParam, lParam);
         }
         BridgeStateOnMove(&shared->state, mouse->pt.x, mouse->pt.y);
@@ -1226,10 +875,8 @@ static LRESULT CALLBACK BridgeMouseProc(int code, WPARAM wParam, LPARAM lParam)
 
     if (BridgeIsRightDown((UINT)wParam))
     {
-        BRIDGE_PROBE_COUNT(rightDown);
         if (!BridgeTryLock(shared))
         {
-            BRIDGE_PROBE_COUNT(lockFailure);
             return CallNextHookEx(NULL, code, wParam, lParam);
         }
         if (shared->state.phase == BRIDGE_PHASE_ACTIVE &&
@@ -1261,10 +908,6 @@ static LRESULT CALLBACK BridgeMouseProc(int code, WPARAM wParam, LPARAM lParam)
                 mouse->pt.y,
                 tick,
                 &supersededSequence);
-            candidateStarted = shared->state.phase == BRIDGE_PHASE_CANDIDATE &&
-                shared->state.targetRoot == (BRIDGE_U64)(ULONG_PTR)targetRoot &&
-                (DWORD)shared->state.targetPid == targetPid &&
-                (DWORD)shared->state.targetTid == targetTid;
         }
         BridgeUnlock(shared);
         if (expiredSequence != 0)
@@ -1275,26 +918,16 @@ static LRESULT CALLBACK BridgeMouseProc(int code, WPARAM wParam, LPARAM lParam)
         {
             BridgePostOwnerMessage(shared, (DWORD)supersededSequence, BRIDGE_OWNER_COMPLETE);
         }
-        if (candidateStarted)
-        {
-            BridgeStartTrace(targetPid, targetTid);
-            BridgePostTrace(shared, 3, (UINT)wParam, targetPid);
-            BRIDGE_PROBE_COUNT(candidate);
-            BridgePostProbe(shared, BRIDGE_PROBE_CONTEXT, sourceContext ? 1 : 2);
-            BridgePostProbe(shared, BRIDGE_PROBE_RIGHT_SEEN, 0);
-        }
         return CallNextHookEx(NULL, code, wParam, lParam);
     }
 
     if (BridgeIsRightUp((UINT)wParam) || BridgeIsLeftUp((UINT)wParam))
     {
-        BRIDGE_PROBE_COUNT(up);
         LONG button = BridgeIsRightUp((UINT)wParam)
             ? (LONG)BRIDGE_BUTTON_RIGHT
             : (LONG)BRIDGE_BUTTON_LEFT;
         if (!BridgeTryLock(shared))
         {
-            BRIDGE_PROBE_COUNT(lockFailure);
             return CallNextHookEx(NULL, code, wParam, lParam);
         }
         targetMatches = BridgeStateIsChordTarget(
@@ -1305,9 +938,6 @@ static LRESULT CALLBACK BridgeMouseProc(int code, WPARAM wParam, LPARAM lParam)
             (BRIDGE_U64)(ULONG_PTR)ownerRoot);
         decision = BridgeStateOnUp(&shared->state, button, targetMatches, tick, &completedSequence);
         BridgeUnlock(shared);
-        BridgePostTrace(shared, 6, (UINT)wParam,
-            ((DWORD)decision & 0xffUL) | (targetMatches ? 0x100UL : 0UL) |
-                (sourceContext ? 0x200UL : 0UL));
         if (completedSequence != 0)
         {
             BridgePostOwnerMessage(shared, (DWORD)completedSequence, BRIDGE_OWNER_COMPLETE);
@@ -1321,15 +951,12 @@ static LRESULT CALLBACK BridgeMouseProc(int code, WPARAM wParam, LPARAM lParam)
 
     if (BridgeIsLeftDown((UINT)wParam))
     {
-        BRIDGE_PROBE_COUNT(leftDown);
         if (targetPid != ownerPid)
         {
-            probeLeft = TRUE;
             sourceForeground = GetForegroundWindow();
         }
         if (!BridgeTryLock(shared))
         {
-            BRIDGE_PROBE_COUNT(lockFailure);
             return CallNextHookEx(NULL, code, wParam, lParam);
         }
         if (shared->state.phase == BRIDGE_PHASE_ACTIVE)
@@ -1353,22 +980,6 @@ static LRESULT CALLBACK BridgeMouseProc(int code, WPARAM wParam, LPARAM lParam)
                 (DWORD)shared->state.targetPid == targetPid &&
                 (DWORD)shared->state.targetTid == targetTid;
             queuedOtherButtons = shared->otherButtons != 0;
-            if (hadCandidate)
-            {
-                if (!queuedRightDown) rejectionDetail = 1;
-                else if (queuedOtherButtons) rejectionDetail = 2;
-                else if (shared->state.targetRoot != (BRIDGE_U64)(ULONG_PTR)targetRoot ||
-                    (DWORD)shared->state.targetPid != targetPid ||
-                    (DWORD)shared->state.targetTid != targetTid) rejectionDetail = 3;
-                else
-                {
-                    LONG dx = shared->state.pressX - mouse->pt.x;
-                    LONG dy = shared->state.pressY - mouse->pt.y;
-                    if (dx < 0) dx = -dx;
-                    if (dy < 0) dy = -dy;
-                    rejectionDetail = dx * dx + dy * dy > 25 ? 4 : 5;
-                }
-            }
             decision = BridgeStateOnLeftDown(
                 &shared->state,
                 (BRIDGE_U64)(ULONG_PTR)targetRoot,
@@ -1382,7 +993,6 @@ static LRESULT CALLBACK BridgeMouseProc(int code, WPARAM wParam, LPARAM lParam)
         }
         if (decision == BRIDGE_DECISION_BEGIN)
         {
-            BRIDGE_PROBE_COUNT(begin);
             sequence = shared->state.requestSequence;
         }
         BridgeUnlock(shared);
@@ -1390,16 +1000,9 @@ static LRESULT CALLBACK BridgeMouseProc(int code, WPARAM wParam, LPARAM lParam)
         {
             BridgePostOwnerMessage(shared, (DWORD)supersededSequence, BRIDGE_OWNER_COMPLETE);
         }
-        if (probeLeft && decision != BRIDGE_DECISION_BEGIN)
-        {
-            BRIDGE_PROBE_COUNT(rejected);
-            BridgePostProbe(shared, BRIDGE_PROBE_LEFT_REJECTED, rejectionDetail);
-        }
         if (activeCancelled) return CallNextHookEx(NULL, code, wParam, lParam);
         if (decision != BRIDGE_DECISION_BEGIN) return CallNextHookEx(NULL, code, wParam, lParam);
 
-        BridgePostProbe(shared, BRIDGE_PROBE_LEFT_CANDIDATE, (LPARAM)sequence);
-        BridgePostTrace(shared, 3, (UINT)wParam, targetPid);
         beginAccepted = BridgeBeginGesture(
             shared,
             (DWORD)sequence,
@@ -1565,7 +1168,6 @@ BOOL __cdecl BridgeInstall(HWND owner, DWORD ownerPid)
         shared->statusBits |= (LONG)BRIDGE_STATUS_HOOK32;
     }
     BridgeUnlock(shared);
-    BridgePostProbe(shared, 54, 1);
 #if defined(_WIN64)
     g_menuEventHook = SetWinEventHook(EVENT_SYSTEM_MENUSTART, EVENT_SYSTEM_MENUPOPUPSTART,
         NULL, BridgeMenuEventProc, 0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
@@ -1577,11 +1179,6 @@ BOOL __cdecl BridgeInstall(HWND owner, DWORD ownerPid)
         return FALSE;
     }
     InterlockedOr(&shared->statusBits, (LONG)BRIDGE_STATUS_MENU_EVENT_HOOK);
-    BridgePostProbe(shared, 56, 1);
-#endif
-#if defined(BRIDGE_INPUT_PROBE) && defined(_WIN64)
-    g_getMessageProbeHook = SetWindowsHookExW(WH_GETMESSAGE, BridgeGetMessageProbeProc, g_module, 0);
-    BridgePostProbe(shared, 55, g_getMessageProbeHook != NULL ? 1 : 0);
 #endif
     return TRUE;
 }
@@ -1628,22 +1225,6 @@ void __cdecl BridgeStop(void)
     g_menuEventCancelling = FALSE;
     g_menuFocusWindow = NULL;
     g_menuFocusEventTick = 0;
-#endif
-#if defined(BRIDGE_INPUT_PROBE) && defined(_WIN64)
-    if (g_getMessageProbeHook != NULL)
-    {
-        UnhookWindowsHookEx(g_getMessageProbeHook);
-        g_getMessageProbeHook = NULL;
-    }
-    g_probeNextMove = FALSE;
-#endif
-#if defined(BRIDGE_INPUT_PROBE) && defined(_WIN64)
-    if (isOwner)
-    {
-        InterlockedExchange(&g_tracePid, 0);
-        InterlockedExchange(&g_traceTid, 0);
-        InterlockedExchange(&g_traceTick, 0);
-    }
 #endif
     if (!isOwner && shared != NULL && BridgeTryLock(shared))
     {

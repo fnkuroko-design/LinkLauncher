@@ -19,9 +19,6 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets/LinkLauncher.ico</ApplicationIcon>
     <InputBridgeOutputDirectory>$(BaseIntermediateOutputPath)$(Configuration)\$(TargetFramework)\$(RuntimeIdentifier)\InputBridge\</InputBridgeOutputDirectory>
-    <InputProbe Condition="'$(InputProbe)' == ''">false</InputProbe>
-    <DefineConstants Condition="'$(InputProbe)' == 'true'">$(DefineConstants);INPUT_PROBE</DefineConstants>
-    <NativeInputProbeArgument Condition="'$(InputProbe)' == 'true'">-InputProbe</NativeInputProbeArgument>
   </PropertyGroup>
   <ItemGroup>
     <Resource Include="Assets/LinkLauncher.ico" />
@@ -35,6 +32,6 @@
   </ItemGroup>
 
   <Target Name="BuildInputBridge" BeforeTargets="PrepareForBuild" Condition="'$(DesignTimeBuild)' != 'true'">
-    <Exec Command="powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\..\..\scripts\Build-InputBridge.ps1&quot; -OutputDirectory &quot;$(MSBuildProjectDirectory)\$(InputBridgeOutputDirectory).&quot; $(NativeInputProbeArgument)" />
+    <Exec Command="powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\..\..\scripts\Build-InputBridge.ps1&quot; -OutputDirectory &quot;$(MSBuildProjectDirectory)\$(InputBridgeOutputDirectory).&quot;" />
   </Target>
 </Project>

@@ -39,7 +39,7 @@ $stageHash = "$stageZip.sha256"
 try {
     $null = New-Item -ItemType Directory -Path $stageAppDirectory -Force
     $dotnet = Get-Command dotnet -ErrorAction Stop
-    & $dotnet.Source publish $projectPath -c Release -r win-x64 --self-contained false -p:PublishSingleFile=false -p:DebugType=None -p:DebugSymbols=false -p:UseAppHost=true -p:InputProbe=false -o $stageAppDirectory
+    & $dotnet.Source publish $projectPath -c Release -r win-x64 --self-contained false -p:PublishSingleFile=false -p:DebugType=None -p:DebugSymbols=false -p:UseAppHost=true -o $stageAppDirectory
     if ($LASTEXITCODE -ne 0) {
         throw "dotnet publish が終了コード $LASTEXITCODE で失敗しました。"
     }

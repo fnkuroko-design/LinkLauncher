@@ -73,9 +73,6 @@ internal sealed class NativeMouseChord : IDisposable
     internal bool RestoreMenuFocus()
     {
         uint result = _disposed ? 0 : _api.RestoreMenuFocus();
-#if INPUT_PROBE
-        ChordInputProbe.Record($"native menu focus result={result}");
-#endif
         return (result & 4) != 0 && (result & 32) == 0;
     }
 

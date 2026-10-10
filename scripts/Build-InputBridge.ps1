@@ -1,7 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$OutputDirectory = (Join-Path $PSScriptRoot '..\src\LinkLauncher\obj\InputBridge'),
-    [switch]$InputProbe
+    [string]$OutputDirectory = (Join-Path $PSScriptRoot '..\src\LinkLauncher\obj\InputBridge')
 )
 
 $ErrorActionPreference = 'Stop'
@@ -66,7 +65,7 @@ function Invoke-BuildBatch([string]$BatchPath)
     finally { $buildCommand.Dispose() }
 }
 
-function Invoke-VcBuild([string]$Architecture, [string]$VcVarsAll, [string]$RepositoryRoot, [string]$StageDirectory, [bool]$InputProbe)
+function Invoke-VcBuild([string]$Architecture, [string]$VcVarsAll, [string]$RepositoryRoot, [string]$StageDirectory)
 {
     $sourceDirectory = Join-Path $RepositoryRoot 'src\LinkLauncher.InputBridge'
     $objectDirectory = Join-Path $StageDirectory $Architecture
@@ -86,10 +85,6 @@ function Invoke-VcBuild([string]$Architecture, [string]$VcVarsAll, [string]$Repo
     $lines.Add('if errorlevel 1 exit /b %errorlevel%')
 
     $compilerFlags = '/nologo /c /TC /utf-8 /W4 /WX /O1 /GS- /Zl /Oi- /Ob0 /DWIN32_LEAN_AND_MEAN /DUNICODE /D_UNICODE'
-    if ($InputProbe)
-    {
-        $compilerFlags += ' /DBRIDGE_INPUT_PROBE'
-    }
     foreach ($unit in @('BridgeHook.c', 'BridgeState.c', 'BridgeMemory.c'))
     {
         $objectFile = Join-Path $objectDirectory ([System.IO.Path]::ChangeExtension($unit, '.obj'))
@@ -193,7 +188,6 @@ $hashParts = foreach ($file in $inputFiles)
     '{0}={1}' -f [System.IO.Path]::GetFileName($file), $hash
 }
 $hashParts += 'Toolset={0}' -f $toolset.FullName
-$hashParts += 'InputProbe={0}' -f $InputProbe.IsPresent
 $inputHash = Get-HashText (($hashParts | Sort-Object) -join "`n")
 
 $outputs = @(
@@ -234,8 +228,8 @@ if (-not $stagePath.StartsWith($outputPrefix, [System.StringComparison]::Ordinal
 try
 {
     New-Item -ItemType Directory -Path $stagePath -Force | Out-Null
-    Invoke-VcBuild -Architecture 'x64' -VcVarsAll $vcVarsAll -RepositoryRoot $repositoryRoot -StageDirectory $stagePath -InputProbe $InputProbe.IsPresent
-    Invoke-VcBuild -Architecture 'x86' -VcVarsAll $vcVarsAll -RepositoryRoot $repositoryRoot -StageDirectory $stagePath -InputProbe $InputProbe.IsPresent
+    Invoke-VcBuild -Architecture 'x64' -VcVarsAll $vcVarsAll -RepositoryRoot $repositoryRoot -StageDirectory $stagePath
+    Invoke-VcBuild -Architecture 'x86' -VcVarsAll $vcVarsAll -RepositoryRoot $repositoryRoot -StageDirectory $stagePath
 
     $hostObjectDirectory = Join-Path $stagePath 'host-x86'
     New-Item -ItemType Directory -Path $hostObjectDirectory -Force | Out-Null

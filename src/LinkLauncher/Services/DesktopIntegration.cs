@@ -103,9 +103,6 @@ public sealed class DesktopIntegration : IDisposable
     private readonly MouseActivationState _mouseActivationState = new();
     private NativeMouseChord? _nativeMouseChord;
     private uint _nativeChordSequence;
-#if INPUT_PROBE
-    private long _probeButtonGeneration;
-#endif
     private readonly DesktopDoubleClickState _desktopDoubleClickState = new();
     private POINT _desktopFirstPoint;
     private IntPtr _desktopFirstWindow;
@@ -213,9 +210,6 @@ public sealed class DesktopIntegration : IDisposable
     /// </summary>
     public bool Configure(string hotkey, MouseActivationPattern mousePattern, bool dismissOnExternalClick = false)
     {
-#if INPUT_PROBE
-        ChordInputProbe.Record($"configure requested={mousePattern} hook={_mouseHook.ToInt64():X}");
-#endif
         if (_disposed)
         {
             return false;
@@ -275,9 +269,6 @@ public sealed class DesktopIntegration : IDisposable
         {
             RollbackStagedHotkey(stagedHotkeyId, hotkey);
             RollbackStagedMouseHook(stagedMouseHook);
-#if INPUT_PROBE
-            ChordInputProbe.Record($"native startup failed: {nativeError}");
-#endif
             RaiseWarning($"右＋左の入力仲介を開始できませんでした。以前の設定を維持します: {nativeError}");
             return false;
         }
@@ -334,9 +325,6 @@ public sealed class DesktopIntegration : IDisposable
             _nativeMouseChord?.Dispose();
             _nativeMouseChord = null;
         }
-#if INPUT_PROBE
-        ChordInputProbe.Record($"configure applied={_mousePattern} hook={_mouseHook.ToInt64():X} nativeStatus={_nativeMouseChord?.Status}");
-#endif
         if (_mouseHook != IntPtr.Zero && !ShouldKeepMouseHook)
         {
             if (UnhookWindowsHookEx(_mouseHook))
@@ -525,22 +513,6 @@ public sealed class DesktopIntegration : IDisposable
 
     private IntPtr WindowMessageHook(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
-#if INPUT_PROBE
-        if (message == 0x803B)
-        {
-            handled = true;
-            uint tag = unchecked((uint)wParam.ToInt64());
-            ulong payload = unchecked((ulong)lParam.ToInt64());
-            ChordInputProbe.Record($"native trace kind={tag >> 16} message={tag & 0xffff:X4} tick={payload >> 32} detail={unchecked((uint)payload)}");
-            return IntPtr.Zero;
-        }
-        if (message == 0x803A)
-        {
-            handled = true;
-            ChordInputProbe.Record($"native stage={wParam.ToInt64()} detail={lParam.ToInt64()}");
-            return IntPtr.Zero;
-        }
-#endif
         if (message == NativeMouseChord.NotificationMessage)
         {
             handled = true;
@@ -557,9 +529,6 @@ public sealed class DesktopIntegration : IDisposable
                 try
                 {
                     bool restored = _restoreSourceMenuFocus(_nativeMouseChord.RestoreMenuFocus);
-#if INPUT_PROBE
-                    ChordInputProbe.Record($"native menu focus ui seq={sequence} restored={restored}");
-#endif
                     return restored ? new IntPtr(1) : IntPtr.Zero;
                 }
                 catch (Exception exception)
@@ -571,10 +540,6 @@ public sealed class DesktopIntegration : IDisposable
             if (notification == NativeMouseChord.CompleteNotification && sequence == _nativeChordSequence
                 && _nativeMouseChord.PendingButtons == 0)
             {
-#if INPUT_PROBE
-                ChordInputProbe.Record($"native complete seq={sequence} status={_nativeMouseChord.Status}");
-                ObserveNativeReleaseState(sequence);
-#endif
                 Action? completion = _mouseActivationCompletion.Release();
                 if (completion is not null) QueueMouseActivationCompletion(_mouseActivationTicket, completion);
             }
@@ -621,12 +586,6 @@ public sealed class DesktopIntegration : IDisposable
             }
         }
 
-#if INPUT_PROBE
-        if (IsButtonDownMessage(message) || IsButtonUpMessage(message))
-            unchecked { _probeButtonGeneration++; }
-        if (message is WmRButtonDown or WmLButtonDown)
-            ChordInputProbe.Record($"hook down={message:X} pattern={_mousePattern} pending={_mouseActivationState.IsPending}");
-#endif
         if (!ShouldInspectMouseMessage(message))
         {
             return CallNextHookSafely(code, wParam, lParam);
@@ -653,10 +612,6 @@ public sealed class DesktopIntegration : IDisposable
             bool freshButtonDown = IsButtonDownMessage(message);
             if (freshButtonDown)
             {
-#if INPUT_PROBE
-                if (_mouseActivationCompletion.IsPending || _mouseActivationCallbackQueued)
-                    ChordInputProbe.Record($"activation followup cancelled=fresh-button nativeActive={_nativeMouseChord?.IsGestureActive}");
-#endif
                 CancelMouseActivationCompletion();
             }
             if (freshButtonDown || message is WmMouseWheel or WmMouseHWheel)
@@ -1445,28 +1400,6 @@ public sealed class DesktopIntegration : IDisposable
         });
     }
 
-#if INPUT_PROBE
-    private void ObserveNativeReleaseState(uint sequence)
-    {
-        long observedGeneration = _probeButtonGeneration;
-        ChordInputProbe.Record($"native released seq={sequence} asyncR={unchecked((ushort)GetAsyncKeyState(0x02)):X4} asyncL={unchecked((ushort)GetAsyncKeyState(0x01)):X4}");
-        var timer = new DispatcherTimer(DispatcherPriority.Background, _window.Dispatcher)
-        {
-            Interval = TimeSpan.FromMilliseconds(25)
-        };
-        timer.Tick += (_, _) =>
-        {
-            timer.Stop();
-            if (_disposed || observedGeneration != _probeButtonGeneration)
-            {
-                ChordInputProbe.Record($"native release recheck seq={sequence} skipped=new-input-or-disposed");
-                return;
-            }
-            ChordInputProbe.Record($"native release recheck seq={sequence} asyncR={unchecked((ushort)GetAsyncKeyState(0x02)):X4} asyncL={unchecked((ushort)GetAsyncKeyState(0x01)):X4}");
-        };
-        timer.Start();
-    }
-#endif
 
     private IntPtr BeginNativeMouseActivation(uint sequence)
     {
@@ -1481,9 +1414,6 @@ public sealed class DesktopIntegration : IDisposable
             if (_nativeMouseChord?.PendingButtons == 0) _mouseActivationCompletion.Release();
             Action? completion = _mouseActivationCompletion.Capture(ticket, _captureMouseActivationCompletion?.Invoke());
             if (completion is not null) QueueMouseActivationCompletion(ticket, completion);
-#if INPUT_PROBE
-            ChordInputProbe.Record($"native begin seq={sequence} visible={_window.IsVisible} pending={_nativeMouseChord?.PendingButtons} status={_nativeMouseChord?.Status}");
-#endif
             return new IntPtr(_window.IsVisible ? 1 : 2);
         }
         catch (Exception exception)

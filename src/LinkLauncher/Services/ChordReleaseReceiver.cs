@@ -127,14 +127,8 @@ public sealed class ChordReleaseReceiver : IDisposable
         try
         {
             _previousForeground = _platform.GetForegroundWindow();
-#if INPUT_PROBE
-            ChordInputProbe.Record($"receiver begin self={_window.ToInt64():X} previous={_previousForeground.ToInt64():X} expectedDownTime={_expectedNativeDownTime}");
-#endif
             if (!_platform.ShowAtPhysicalPoint(x, y))
             {
-#if INPUT_PROBE
-                ChordInputProbe.Record("receiver show failed");
-#endif
                 Finish(false);
                 return false;
             }
@@ -256,9 +250,6 @@ public sealed class ChordReleaseReceiver : IDisposable
                         return new IntPtr(ChordReleaseReceiverMessages.MaNoActivateAndEat);
                     }
 
-#if INPUT_PROBE
-                    ChordInputProbe.Record($"receiver WM_MOUSEACTIVATE foreground={_platform.GetForegroundWindow().ToInt64():X} messageTime={_platform.GetMessageTime()} lParam={lParam.ToInt64():X}");
-#endif
                     return new IntPtr(ChordReleaseReceiverMessages.MaActivate);
 
                 case ChordReleaseReceiverMessages.WmNcHitTest:
@@ -269,18 +260,12 @@ public sealed class ChordReleaseReceiver : IDisposable
                     uint timerId = unchecked((uint)wParam.ToInt64());
                     if (timerId == PreparationTimerId && _phase == Phase.WaitingForNativeDown)
                     {
-#if INPUT_PROBE
-                        ChordInputProbe.Record("receiver native LEFTDOWN preparation timeout");
-#endif
                         Finish(false);
                         return IntPtr.Zero;
                     }
 
                     if (timerId == WatchdogTimerId && _phase == Phase.Active)
                     {
-#if INPUT_PROBE
-                        ChordInputProbe.Record("receiver active watchdog timeout");
-#endif
                         Finish(false);
                         return IntPtr.Zero;
                     }
@@ -340,16 +325,10 @@ public sealed class ChordReleaseReceiver : IDisposable
         uint messageTime = _platform.GetMessageTime();
         if (messageTime != _expectedNativeDownTime || lParam != IntPtr.Zero)
         {
-#if INPUT_PROBE
-            ChordInputProbe.Record($"receiver LEFTDOWN mismatch expectedTime={_expectedNativeDownTime} messageTime={messageTime} lParam={lParam.ToInt64():X}");
-#endif
             Finish(false);
             return;
         }
 
-#if INPUT_PROBE
-        ChordInputProbe.Record($"receiver WM_LBUTTONDOWN match expectedTime={_expectedNativeDownTime} messageTime={messageTime} lParam={lParam.ToInt64():X} foreground={_platform.GetForegroundWindow().ToInt64():X}");
-#endif
         _phase = Phase.EstablishingCapture;
         StopTimer();
         if (_phase != Phase.EstablishingCapture)
@@ -359,9 +338,6 @@ public sealed class ChordReleaseReceiver : IDisposable
 
         if (_platform.GetForegroundWindow() != _window)
         {
-#if INPUT_PROBE
-            ChordInputProbe.Record("receiver native LEFTDOWN did not activate receiver");
-#endif
             Finish(false);
             return;
         }
@@ -374,9 +350,6 @@ public sealed class ChordReleaseReceiver : IDisposable
 
         if (_platform.GetCapture() != _window || _platform.GetForegroundWindow() != _window)
         {
-#if INPUT_PROBE
-            ChordInputProbe.Record($"receiver capture establishment failed capture={_platform.GetCapture().ToInt64():X} foreground={_platform.GetForegroundWindow().ToInt64():X}");
-#endif
             Finish(false);
             return;
         }
@@ -394,9 +367,6 @@ public sealed class ChordReleaseReceiver : IDisposable
             return;
         }
 
-#if INPUT_PROBE
-        ChordInputProbe.Record($"receiver foreground/capture established foreground={_platform.GetForegroundWindow().ToInt64():X} capture={_platform.GetCapture().ToInt64():X}");
-#endif
         _startedRaised = true;
         NotifyStarted();
 
@@ -493,9 +463,6 @@ public sealed class ChordReleaseReceiver : IDisposable
         }
 
         long session = _sessionSequence;
-#if INPUT_PROBE
-        ChordInputProbe.Record($"receiver finish success={succeeded} phase={_phase} nativeLeftDown={(_phase is Phase.EstablishingCapture or Phase.Active)} leftUp={_leftUpReceived} rightUp={_rightUpReceived}");
-#endif
         _phase = Phase.Finishing;
 
         StopTimer();
