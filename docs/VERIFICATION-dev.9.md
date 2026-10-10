@@ -115,6 +115,9 @@ input-dのChordReleaseChecksは1回実行した。12個のチェックが成功�
 - WM_ENTERMENULOOPのpopup通知またはWM_INITMENUPOPUPで、ACTIVEかつ受理済み・未解放、PID/TID/rootが元の呼び出しに一致、callback自身がそのsourceスレッド内、開始から2秒未満の場合だけEndMenuを呼ぶ。状態lockを解除してからAPIを呼び、通知自体と後続hookの結果はそのまま渡す。通常右クリック・別窓・ランチャー自身のメニュー・installer側のcallbackには適用しない。
 - 診断ログのkind 7にEndMenuの結果（1成功、0失敗）を記録する。この記録は正式版から除去するが、標準メニュー終了の機能そのものは診断とは別に扱う。独自描画メニューやsource側へ届かない通知への万能な保証はしない。
 - まずデスクトップで元メニューが出ないこと、表示と左右解放が正常であることを少数の手動操作で確認する。
+- ソース`fd120861bbee1b4672c84507aa321d15c216e498`からpublish成功、警告・エラー出力なし。5バイナリと19ソースのハッシュ・コピーを試作外側へ保持した。純状態遷移に変更がないため7ケースの再実行は行っていない。EndMenuのWindows上の適用結果は自動試験で代用しない。
+- ユーザーのinput-i終了連絡後、残存なしと5バイナリのハッシュを確認して記録付きで起動した。本体PID 9436、status=21、stage 54 detail 1。起動前後のユーザーデータは`d440e36535843cb36a769c1af9040650df675f4d94c6c822f148a7df47e8ff38`で一致した。実機結果は回答待ち。
+- 記録先は`artifacts/previews/LinkLauncher-v0.1.2-dev.9-input-j-menu-cancel-probe/observations/20261011-012921-11bff986f5934c52bb4990927bb38298/`。強制終了・入力生成・カーソル移動・Computer Useは行っていない。正式配布ZIPは作成していない。
 
 ## 試作の比較と復元
 
