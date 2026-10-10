@@ -12,7 +12,7 @@ dev.8常駐中に、デスクトップ空白でユーザーが右＋左を操作
 
 ## 変更と自動確認
 
-通常の右DOWN・MOVE・UPはそのまま通す。input-a〜dの受け窓方式は実機で不合格だった。現在は通常のWH_MOUSEによる後段の通知処理を試作している。Windowsへの物理DOWN/UPを低レベルフックで止めず、外部WM_CANCELMODE通知は廃止する。以下は過去の試作の自動確認であり、新方式の実機成功を示さない。
+通常の右DOWN・MOVE・UPはそのまま通す。input-a〜dの受け窓方式は実機で不合格だった。現在は通常のWH_MOUSEによる後段の通知処理を試作している。Windowsへの物理DOWN/UPを低レベルフックで止めない。eでは外部WM_CANCELMODE通知を廃止し、gではinstaller側に届いた呼び出し候補について、照合済みのsource capture窓だけに同期WM_CANCELMODEを送り解除を再確認する。以下は過去の試作の自動確認であり、新方式の実機成功を示さない。
 
 | 確認 | 結果 | 確認範囲 |
 | --- | --- | --- |
@@ -67,6 +67,15 @@ input-dのChordReleaseChecksは1回実行した。12個のチェックが成功�
 - ユーザーがinput-eを終了した後、残存プロセスなしを確認し、rootがinput-fを記録付きで起動した。本体PID 3256、補助PID 9488、status=7。ユーザーデータの起動前後のSHA-256は一致した。通常のCodex/Chromeでの操作中に、共有取得・無効状態・target照会・lockの失敗は0だったが、対象PIDと実行PIDの不一致による`contextSkipped`が増えた。
 - ユーザーにデスクトップ空白へポインターを置くだけの確認を1回依頼した。クリック・右＋左は不要とした。直後のsnapshotは、対象Explorer PID 11528/TID 11532に対し、x64実行PID 3256・x86実行PID 9488、両方の`contextSkipped=3919`。x64のsource-context受付は2のまま、x86は0、DOWN・candidate・BEGIN・ACKは全て0だった。この観測では、installer側に届く正常な通知をPID/TID一致ガードで除外していたことが分かった。eの失敗したDOWNそのものの再記録ではないが、同じデスクトップ領域での経路を確認した。
 - fの記録先は`artifacts/previews/LinkLauncher-v0.1.2-dev.9-input-f-entry-probe/observations/20261011-004053-6c9e3c0612854d26b610b45e6cfa1561/`。`snapshot-after-desktop-pointer.json`を保持する。OSはAMD64、Explorer/Codex/Chrome/本体はネイティブ64bit、補助は32bitであり、ARM64との相違が原因ではない。
+
+### input-gのビルド・起動（2026-10-11）
+
+- ソース`1d8e3f3c6d81bf0cd96b3f01eab8bc858ec3fb30`からRelease / win-x64 / framework-dependentでpublishした。初回のSHORT定数変換によるビルドエラーを修正し、最終ビルドは警告・エラー出力なし。純状態遷移は変更していないため7ケースの再実行は行っていない。
+- 試作は`artifacts/previews/LinkLauncher-v0.1.2-dev.9-input-g-single-hook-probe/`。アプリのフォルダーはC#本体4ファイルとx64 DLL（12,288 bytes）の計5ファイルのみ。x86 DLL・補助EXE・ランタイム・PDBは含めない。開発用スクリプトでは歴史的なx86モジュールもビルドするが、gの配布・起動対象はx64 DLL一本である。
+- 5バイナリのSHA-256、17ソースファイルのコピーとハッシュ、ソースコミット、読み取りスクリプトのハッシュを試作フォルダー外側の`build-info.json`と`source-snapshot/`へ保存した。x64 DLLのimportはUSER32.dll / KERNEL32.dllのみ。
+- ユーザーがinput-fをトレイから終了した後、残存する本体・補助プロセスなしと5バイナリのハッシュ一致を確認し、rootがgを記録付きで起動した。本体PID 11852、試作EXEのパス、`nativeStatus=5`を確認した。補助プロセスはない。これは起動・登録の証拠であり、右＋左の呼び出し成功を示さない。
+- 起動記録は`observations/20261011-010149-371c7b6ab3bd4d3b9ddf810315d32548/`。読み取り専用の`Read-Probe.ps1`で実コールバックの到達と通常のLEFTDOWN/UPを確認し、`snapshot-startup.json`に保存した。共有取得・target照会・lockの失敗は0だった。右＋左の実機受入はユーザーの回答待ち。
+- `library.json`の起動前後のSHA-256は`0f5b6664ce1f7f2ab81caa138671589aeca6de47ca715ce50f5094e59f522549`で一致した。設定保存・スタートアップ登録変更・入力生成・カーソル自動移動・Computer Useは行っていない。
 
 ## 試作の比較と復元
 
