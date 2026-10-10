@@ -613,6 +613,7 @@ static LRESULT CALLBACK BridgeCallWndProc(int code, WPARAM wParam, LPARAM lParam
     {
         const CWPSTRUCT *event = (const CWPSTRUCT *)lParam;
         BRIDGE_SHARED *shared;
+#if defined(_WIN64)
         if (event->message == WM_NULL)
         {
             HWND root = NULL;
@@ -647,6 +648,7 @@ static LRESULT CALLBACK BridgeCallWndProc(int code, WPARAM wParam, LPARAM lParam
                 BridgePostTrace(shared, 23, WM_NULL, granted ? 1UL : 0UL);
             }
         }
+#endif
 #if defined(BRIDGE_INPUT_PROBE) && defined(_WIN64)
         switch (event->message)
         {
