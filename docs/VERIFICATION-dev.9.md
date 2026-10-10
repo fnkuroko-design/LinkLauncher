@@ -165,6 +165,8 @@ input-dのChordReleaseChecksは1回実行した。12個のチェックが成功�
 - input.logのseq 18/19の解放後、それぞれ141ms/906msでpopupイベントが記録された。両試行ともasyncR/L=0で、ボタン解放漏れとは区別する。観測補助PID 34496は180秒でSTOPを記録し終了した。常駐input-lは維持している。
 - 編集前に対象・現在動作・原因・変更・受入条件を説明し、mでは受理済みsourceに一致するmenu WinEventにWM_CANCELMODEを送る共通処理を実装した。guard照合、古いイベント拒否、再入防止、送信予算25ms、登録/停止処理を追加し、開始確認maskを53へ変更した。通常の入力通過・解放仲介に変更はない。
 - 純状態試験12/12成功。記録は`artifacts/checks/dev9-menu-event-20261011-022541/result.txt`。WM_CANCELMODE配送成功は独自メニューが閉じる保証ではなく、タスクバー・デスクトップの実機改善は未確認。少数の手動確認まで正式配布ZIP/GitHub公開を行わない。
+- ソース`8ba707093bdfc3a9ba800c8bd706a07310dfaf72`からinput-mをRelease / win-x64 / framework-dependentでpublish成功、警告・エラー出力なし。試作は`artifacts/previews/LinkLauncher-v0.1.2-dev.9-input-m-menu-event-probe/`。アプリ内5バイナリ、native x64 DLLは16,384 bytes。19ソースのコピーと5バイナリのSHA-256を外側へ保持した。旧dev.8 ZIPのSHA-256は従前と一致した。
+- input-mは未起動。input-l PID 34204が単独常駐しているため、ユーザーのトレイ終了後に記録付きでmへ切り替える。設定・データ・スタートアップ先は変更しない。終了連絡後は残存なしとバイナリ一致を確認してから起動する。観測専用ツールは終了済み。
 
 ## 試作の比較と復元
 
