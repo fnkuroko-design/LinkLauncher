@@ -3,6 +3,7 @@
 #define BRIDGE_LOCK_ATTEMPTS 4096L
 #define BRIDGE_MAP_NAME_CAPACITY 96
 #define BRIDGE_GESTURE_BUDGET_MS 75UL
+#define BRIDGE_MENU_CANCEL_BUDGET_MS 25UL
 #define BRIDGE_PROBE_MESSAGE (WM_APP + 0x3A)
 #define BRIDGE_PROBE_RIGHT_SEEN 10
 #define BRIDGE_PROBE_LEFT_CANDIDATE 20
@@ -125,6 +126,10 @@ static LONG BridgeReadOtherButtons(void)
 static HINSTANCE g_module = NULL;
 static HHOOK g_mouseHook = NULL;
 static HHOOK g_callWndHook = NULL;
+#if defined(_WIN64)
+static HWINEVENTHOOK g_menuEventHook = NULL;
+static BOOL g_menuEventCancelling = FALSE;
+#endif
 #if defined(BRIDGE_INPUT_PROBE) && defined(_WIN64)
 static HHOOK g_getMessageProbeHook = NULL;
 static BOOL g_probeNextMove = FALSE;
@@ -418,6 +423,65 @@ static LRESULT CALLBACK BridgeGetMessageProbeProc(int code, WPARAM wParam, LPARA
         }
     }
     return CallNextHookEx(NULL, code, wParam, lParam);
+}
+#endif
+
+#if defined(_WIN64)
+static BOOL BridgeMenuEventTargetMatches(BRIDGE_SHARED *shared, HWND window,
+    HWND expectedRoot, DWORD expectedPid, DWORD expectedTid, DWORD eventTick)
+{
+    HWND root = NULL;
+    DWORD pid = 0;
+    DWORD tid = 0;
+    BOOL matched;
+    BOOL visible;
+    if (shared == NULL || InterlockedCompareExchange(&shared->enabled, 0, 0) == 0 ||
+        !BridgeIsRootTarget(window, &root, &pid, &tid) || root != expectedRoot ||
+        pid != expectedPid || tid != expectedTid || pid == (DWORD)shared->ownerPid)
+        return FALSE;
+    visible = IsWindowVisible((HWND)(ULONG_PTR)shared->ownerHwnd);
+    if (!BridgeTryLock(shared)) return FALSE;
+    matched = BridgeMenuGuardMatchesEvent(&shared->menuGuard,
+        (BRIDGE_U64)(ULONG_PTR)root, pid, tid, visible, eventTick, GetTickCount());
+    BridgeUnlock(shared);
+    return matched;
+}
+
+/* Owner-thread event delivery covers menu frameworks which do not emit
+ * WM_ENTERMENULOOP/WM_INITMENUPOPUP. Cancel only the accepted source, never
+ * close/destroy a popup or synthesize escape/click/button releases. */
+static void CALLBACK BridgeMenuEventProc(HWINEVENTHOOK hook, DWORD event,
+    HWND window, LONG objectId, LONG childId, DWORD eventTid, DWORD eventTick)
+{
+    BRIDGE_SHARED *shared;
+    HWND root = NULL;
+    DWORD pid = 0;
+    DWORD tid = 0;
+    DWORD started;
+    DWORD elapsed;
+    DWORD_PTR result = 0;
+    LRESULT sent;
+    (void)hook; (void)objectId; (void)childId;
+    if ((event != EVENT_SYSTEM_MENUSTART && event != EVENT_SYSTEM_MENUPOPUPSTART) ||
+        window == NULL || g_menuEventCancelling ||
+        !BridgeIsRootTarget(window, &root, &pid, &tid) || tid != eventTid)
+        return;
+    shared = BridgeEnsureShared();
+    if (!BridgeMenuEventTargetMatches(shared, window, root, pid, tid, eventTick)) return;
+    started = GetTickCount();
+    g_menuEventCancelling = TRUE;
+    sent = SendMessageTimeoutW(window, WM_CANCELMODE, 0, 0,
+        SMTO_ABORTIFHUNG | SMTO_BLOCK, BRIDGE_MENU_CANCEL_BUDGET_MS, &result);
+    BridgePostTrace(shared, 17, (UINT)event, sent != 0 ? 1UL : 0UL);
+    elapsed = GetTickCount() - started;
+    if (window != root && elapsed < BRIDGE_MENU_CANCEL_BUDGET_MS &&
+        BridgeMenuEventTargetMatches(shared, root, root, pid, tid, eventTick))
+    {
+        sent = SendMessageTimeoutW(root, WM_CANCELMODE, 0, 0,
+            SMTO_ABORTIFHUNG | SMTO_BLOCK, BRIDGE_MENU_CANCEL_BUDGET_MS - elapsed, &result);
+        BridgePostTrace(shared, 18, (UINT)event, sent != 0 ? 1UL : 0UL);
+    }
+    g_menuEventCancelling = FALSE;
 }
 #endif
 
@@ -1326,6 +1390,19 @@ BOOL __cdecl BridgeInstall(HWND owner, DWORD ownerPid)
     }
     BridgeUnlock(shared);
     BridgePostProbe(shared, 54, 1);
+#if defined(_WIN64)
+    g_menuEventHook = SetWinEventHook(EVENT_SYSTEM_MENUSTART, EVENT_SYSTEM_MENUPOPUPSTART,
+        NULL, BridgeMenuEventProc, 0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
+    if (g_menuEventHook == NULL)
+    {
+        DWORD eventError = GetLastError();
+        BridgeStop();
+        SetLastError(eventError);
+        return FALSE;
+    }
+    InterlockedOr(&shared->statusBits, (LONG)BRIDGE_STATUS_MENU_EVENT_HOOK);
+    BridgePostProbe(shared, 56, 1);
+#endif
 #if defined(BRIDGE_INPUT_PROBE) && defined(_WIN64)
     g_getMessageProbeHook = SetWindowsHookExW(WH_GETMESSAGE, BridgeGetMessageProbeProc, g_module, 0);
     BridgePostProbe(shared, 55, g_getMessageProbeHook != NULL ? 1 : 0);
@@ -1345,6 +1422,7 @@ void __cdecl BridgeStop(void)
         {
             shared->statusBits &= ~((LONG)BRIDGE_STATUS_HOOK64 |
                 (LONG)BRIDGE_STATUS_MENU_HOOK |
+                (LONG)BRIDGE_STATUS_MENU_EVENT_HOOK |
                 (LONG)BRIDGE_STATUS_ENABLED | (LONG)BRIDGE_STATUS_FOREGROUND_PROMOTED);
             BridgeStateCancel(&shared->state);
             BridgeMenuGuardClear(&shared->menuGuard);
@@ -1365,6 +1443,14 @@ void __cdecl BridgeStop(void)
         UnhookWindowsHookEx(g_callWndHook);
         g_callWndHook = NULL;
     }
+#if defined(_WIN64)
+    if (g_menuEventHook != NULL)
+    {
+        UnhookWinEvent(g_menuEventHook);
+        g_menuEventHook = NULL;
+    }
+    g_menuEventCancelling = FALSE;
+#endif
 #if defined(BRIDGE_INPUT_PROBE) && defined(_WIN64)
     if (g_getMessageProbeHook != NULL)
     {

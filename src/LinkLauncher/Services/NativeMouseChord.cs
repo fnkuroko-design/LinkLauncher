@@ -14,7 +14,7 @@ internal sealed class NativeMouseChord : IDisposable
     internal const int NotificationMessage = 0x8039;
     internal const int BeginNotification = 1;
     internal const int CompleteNotification = 2;
-    private const uint ReadyStatus = 21; // 64bit mouse hook + menu hook + enabled。
+    private const uint ReadyStatus = 53; // mouse + callwnd menu + WinEvent menu + enabled。
 
     // Unhook直後も既存callbackが終了処理中である可能性があるため、DLLはプロセスの寿命まで保持します。
     private static Bindings? _bindings;

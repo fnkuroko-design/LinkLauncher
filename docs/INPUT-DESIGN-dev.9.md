@@ -174,6 +174,20 @@ lでは同じ対象の新しいRIGHTDOWNも旧seqをsupersedeした後、新し�
 
 ユーザーは、マウスのクリック機能とカーソル表示が維持される、または事故時に確実に復旧して返せる場合に限り、検証用の入力生成を許可した。元の座標や物理押下状態への復元を要求したものではない。許可は更新されたが、公開Computer Use APIには右保持＋左押下の操作がなく、無断で非公開helperプロトコルを拡張しない。API初期化のみで、マウス/キーボード入力・カーソル移動・画面の活性化は行っていない。今回の対象動作の自動実機合否は確認できず、ビルドと純状態試験後に手動試験の段階でユーザーの指示どおりゴールを一時停止する。
 
+### input-lのメニュー所有先観測とinput-mの取消通知
+
+input-lの手動確認はデスクトップ連続3回・通常右クリックが正常、タスクバー空白とスタートでは元メニューが残り、アプリアイコンでは残らなかった。配布外の180秒の受動WinEvent観測で、空白/スタートの順の両試行はsource root 65988 / PID 11528 / TID 13300のInputSite窓66420からEVENT_SYSTEM_MENUPOPUPSTARTを通知し、同じsource rootをownerとするXaml_WindowedPopupClassの窓1705038/1770574を表示した。class名で対処を分岐する根拠にはしない。GUI thread infoのmenuOwnerは0で、従来の標準menu開始通知はなかった。
+
+1回目はseq 18の右UPがtick 39404484、popup開始が39404625（141ms後）。2回目はseq 19の右UPが39416203、popup開始が39417109（906ms後）。フックのボタン解放完了とメニュー実表示を同じ時点と扱わず、非同期のメニュー表示イベントを取消の契機にする。
+
+mは所有者側スレッドのWINEVENT_OUTOFCONTEXTでEVENT_SYSTEM_MENUSTART/END/MENUPOPUPSTARTの狭い範囲を登録し、処理するのはSTARTとPOPUPSTARTのみ。受理済みMenuGuardのroot/PID/TIDに通知先が一致し、eventTidも一致、イベント時刻が受理以降かつ現在時刻以前で、次の通常入力による消去/非表示条件にも合う場合だけ、その通知窓とsource rootへWM_CANCELMODEを送る。二つの送信は合計25msの予算で、各送信前に対象・guardを再照合し、hook内の取消再入を避ける。sourceは別プロセスで、SMTO_ABORTIFHUNG | SMTO_BLOCKを使用する。配送成功をメニュー終了成功と同一視しない。
+
+元のWM_CANCELMODEによるcapture取消と標準メニューのEndMenuを保持する。ポップアップのWM_CLOSE/破壊、擬似Escape/クリック/UP、カーソル移動、特定class/appの条件分岐は導入しない。通常の右DOWN/ドラッグの通過とwindow UPの仲介はlから変更しない。メニュー実表示後のout-of-context通知のため一瞬の表示や独自UIの通知非対応は残り得る。実機の取消合否を別途確認する。
+
+登録失敗ではnative hooksを停止し開始失敗を報告する。ready statusは53（mouse 1 + enabled 4 + CallWnd menu 16 + WinEvent menu 32）へ変更、停止時にUnhookWinEventとstatus解除を行う。stage 56とtrace kind 17/18は試作用の登録・配送結果で、正式版では全診断とともに除去する。
+
+純状態試験は12/12。新しいケースは非同期イベントの受理前/別root/PID/TID/非表示/消去/再受理前の旧イベントとtick wrap/未来時刻を拒否する境界を確認する。Windowsの配送と独自メニューの取消結果はこの試験では確認しない。
+
 ## 一次資料
 
 - [LowLevelMouseProc](https://learn.microsoft.com/en-us/windows/win32/winmsg/lowlevelmouseproc): 次のフックへの受け渡しと抑止。
@@ -185,6 +199,8 @@ lでは同じ対象の新しいRIGHTDOWNも旧seqをsupersedeした後、新し�
 - [WM_ENTERMENULOOP](https://learn.microsoft.com/en-us/windows/win32/menurc/wm-entermenuloop): popupメニュー開始の通知。
 - [WM_INITMENUPOPUP](https://learn.microsoft.com/en-us/windows/win32/menurc/wm-initmenupopup): メニュー表示前の初期化通知。
 - [SetWindowsHookExW](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwindowshookexw): 他プロセスのフックと32bit・64bitの制約。
+- [SetWinEventHook](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwineventhook): out-of-context通知とmessage loop、停止時の解除。
+- [Event Constants](https://learn.microsoft.com/en-us/windows/win32/winauto/event-constants): menu表示イベント。各UIのイベント発生は実際の観測で確認する。
 - [入力再送の順序](https://devblogs.microsoft.com/oldnewthing/20121206-00/?p=5903): 物理UPと後挿入DOWNの順序が押しっぱなしを生む例。
 - [GetAsyncKeyState](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getasynckeystate): ボタン状態と照会失敗。対象アプリの押下フラグとは区別する。
 - [WM_CANCELMODE](https://learn.microsoft.com/en-us/windows/win32/winmsg/wm-cancelmode): 標準のキャンセル処理の範囲。

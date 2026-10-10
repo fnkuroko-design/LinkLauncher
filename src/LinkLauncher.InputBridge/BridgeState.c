@@ -31,6 +31,17 @@ BRIDGE_I32 BridgeMenuGuardMatches(const BRIDGE_MENU_GUARD *guard,
         (BRIDGE_U32)(tick - guard->startTick) < BRIDGE_WATCHDOG_MS;
 }
 
+BRIDGE_I32 BridgeMenuGuardMatchesEvent(const BRIDGE_MENU_GUARD *guard,
+    BRIDGE_U64 root, BRIDGE_U32 pid, BRIDGE_U32 tid,
+    BRIDGE_I32 ownerVisible, BRIDGE_U32 eventTick, BRIDGE_U32 tick)
+{
+    if (!BridgeMenuGuardMatches(guard, root, pid, tid, ownerVisible, tick)) return 0;
+    /* OUTOFCONTEXT events can arrive after a new action/rearm. Never cancel
+     * a menu event that predates this accepted gesture, including clock wrap. */
+    return (BRIDGE_U32)(eventTick - guard->startTick) < 0x80000000UL &&
+        (BRIDGE_U32)(tick - eventTick) < 0x80000000UL;
+}
+
 static BRIDGE_I32 BridgeWithinAxis(BRIDGE_I32 a, BRIDGE_I32 b)
 {
     if (a >= b)

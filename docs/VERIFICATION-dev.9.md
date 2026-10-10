@@ -159,6 +159,13 @@ input-dのChordReleaseChecksは1回実行した。12個のチェックが成功�
 - 観測補助プロセスPID 34496、READY tick 39351015を確認した。タスクバー空白とスタート各1回だけの手動操作を依頼した。記録先は起動時の観測フォルダーのmenu-events-*.log。自動試験・正式配布物ではない。
 - 公式資料 https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwindowshookexw はアプリ種別によるglobal hook実行場所/通知の制限を説明するが、本環境のtaskbarへの適用はまだ推定。https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwineventhook に従い、out-of-context observerのcallbackをGCHandleで保持しmessage loopと解除を行う。
 
+### input-l観測結果とinput-mの実装
+
+- ユーザーがタスクバー空白→スタート各1回の手動確認完了を報告。menu-events-20261011-022202.logでは両方でEVENT_SYSTEM_MENUPOPUPSTARTがsource子窓66420 / root 65988 / PID 11528 / TID 13300に属し、root 65988をownerとする別のXAML popup窓が表示された。標準メニュー通知を使った従来処理では対象に届いていなかった。class名への例外は導入しない。
+- input.logのseq 18/19の解放後、それぞれ141ms/906msでpopupイベントが記録された。両試行ともasyncR/L=0で、ボタン解放漏れとは区別する。観測補助PID 34496は180秒でSTOPを記録し終了した。常駐input-lは維持している。
+- 編集前に対象・現在動作・原因・変更・受入条件を説明し、mでは受理済みsourceに一致するmenu WinEventにWM_CANCELMODEを送る共通処理を実装した。guard照合、古いイベント拒否、再入防止、送信予算25ms、登録/停止処理を追加し、開始確認maskを53へ変更した。通常の入力通過・解放仲介に変更はない。
+- 純状態試験12/12成功。記録は`artifacts/checks/dev9-menu-event-20261011-022541/result.txt`。WM_CANCELMODE配送成功は独自メニューが閉じる保証ではなく、タスクバー・デスクトップの実機改善は未確認。少数の手動確認まで正式配布ZIP/GitHub公開を行わない。
+
 ## 試作の比較と復元
 
 2版の同時起動は単一起動制御でできない。旧dev.8をトレイから終了し、dev.9の試作用EXEを起動する。比較中は設定の保存を行わず、スタートアップ登録先を変更しない。元へ戻す場合はdev.9をトレイから終了し、保持した `artifacts/releases/LinkLauncher-v0.1.2-dev.8-win-x64/LinkLauncher/LinkLauncher.exe` を起動する。

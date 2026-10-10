@@ -296,10 +296,42 @@ static int CheckMenuHideGestureAndRearm(void)
     return 1;
 }
 
+static int CheckQueuedMenuEventBoundaries(void)
+{
+    BRIDGE_MENU_GUARD guard = { 0 };
+    BridgeMenuGuardArm(&guard, 0xC00, 112, 212, 1, 1000);
+    CHECK_VALUE("event from accepted source matches", BridgeMenuGuardMatchesEvent(&guard,
+        0xC00, 112, 212, 1, 1200, 1300), 1);
+    CHECK_VALUE("event before acceptance is ignored", BridgeMenuGuardMatchesEvent(&guard,
+        0xC00, 112, 212, 1, 999, 1300), 0);
+    CHECK_VALUE("other root event is ignored", BridgeMenuGuardMatchesEvent(&guard,
+        0xC01, 112, 212, 1, 1200, 1300), 0);
+    CHECK_VALUE("other process event is ignored", BridgeMenuGuardMatchesEvent(&guard,
+        0xC00, 113, 212, 1, 1200, 1300), 0);
+    CHECK_VALUE("other thread event is ignored", BridgeMenuGuardMatchesEvent(&guard,
+        0xC00, 112, 213, 1, 1200, 1300), 0);
+    CHECK_VALUE("hidden launcher event is ignored", BridgeMenuGuardMatchesEvent(&guard,
+        0xC00, 112, 212, 0, 1200, 1300), 0);
+    BridgeMenuGuardClear(&guard);
+    CHECK_VALUE("new ordinary action disables queued cancellation", BridgeMenuGuardMatchesEvent(&guard,
+        0xC00, 112, 212, 1, 1200, 1300), 0);
+    BridgeMenuGuardArm(&guard, 0xC00, 112, 212, 1, 1400);
+    CHECK_VALUE("same source rearm ignores prior event", BridgeMenuGuardMatchesEvent(&guard,
+        0xC00, 112, 212, 1, 1200, 1500), 0);
+    BridgeMenuGuardArm(&guard, 0xC00, 112, 212, 0, 0xFFFFFFF0UL);
+    CHECK_VALUE("queued event tolerates tick wrap", BridgeMenuGuardMatchesEvent(&guard,
+        0xC00, 112, 212, 0, 0x10UL, 0x20UL), 1);
+    CHECK_VALUE("old event before tick wrap is ignored", BridgeMenuGuardMatchesEvent(&guard,
+        0xC00, 112, 212, 0, 0xFFFFFFE0UL, 0x20UL), 0);
+    CHECK_VALUE("future timestamp is ignored", BridgeMenuGuardMatchesEvent(&guard,
+        0xC00, 112, 212, 0, 0x30UL, 0x20UL), 0);
+    return 1;
+}
+
 int main(void)
 {
     int passed = 0;
-    int total = 11;
+    int total = 12;
     passed += CheckNormalChordLeftUpFirst();
     passed += CheckNormalChordRightUpFirst();
     passed += CheckEarlyUpsBeforeAcknowledgement();
@@ -311,6 +343,7 @@ int main(void)
     passed += CheckMenuSourceAndVisibilityBoundary();
     passed += CheckMenuHideGestureAndRearm();
     passed += CheckRepeatedCallsWithUndeliveredWindowUps();
+    passed += CheckQueuedMenuEventBoundaries();
     printf("Bridge state checks: %d/%d passed\n", passed, total);
     return passed == total ? 0 : 1;
 }

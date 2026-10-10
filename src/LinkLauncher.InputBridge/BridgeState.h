@@ -66,6 +66,9 @@ void BridgeMenuGuardArm(BRIDGE_MENU_GUARD *guard, BRIDGE_U64 root,
 BRIDGE_I32 BridgeMenuGuardMatches(const BRIDGE_MENU_GUARD *guard,
     BRIDGE_U64 root, BRIDGE_U32 pid, BRIDGE_U32 tid,
     BRIDGE_I32 ownerVisible, BRIDGE_U32 tick);
+BRIDGE_I32 BridgeMenuGuardMatchesEvent(const BRIDGE_MENU_GUARD *guard,
+    BRIDGE_U64 root, BRIDGE_U32 pid, BRIDGE_U32 tid,
+    BRIDGE_I32 ownerVisible, BRIDGE_U32 eventTick, BRIDGE_U32 tick);
 
 void BridgeStateInit(BRIDGE_STATE *state);
 void BridgeStateCancel(BRIDGE_STATE *state);
