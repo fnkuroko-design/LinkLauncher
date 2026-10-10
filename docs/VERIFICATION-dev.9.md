@@ -40,3 +40,13 @@ dev.8常駐中に、デスクトップ空白でユーザーが右＋左を操作
 2版の同時起動は単一起動制御でできない。旧dev.8をトレイから終了し、dev.9の試作用EXEを起動する。比較中は設定の保存を行わず、スタートアップ登録先を変更しない。元へ戻す場合はdev.9をトレイから終了し、保持した `artifacts/releases/LinkLauncher-v0.1.2-dev.8-win-x64/LinkLauncher/LinkLauncher.exe` を起動する。
 
 ユーザーデータの形式・設定の値は変更していない。完成済み正式版・dev.8以前の成果物を保持する。調査用ツール・ログは配布アプリに含めない。正式ZIPとGitHub公開は実機確認後に別途扱う。
+
+## 試作成果物
+
+- ソース: `2dd61d7f27a4b154eea32edcb02f2b2828cf0197`。ブランチ: `codex/dev9-release-state`。
+- 試作フォルダー: `artifacts/previews/LinkLauncher-v0.1.2-dev.9-input-a/LinkLauncher/`。Release / win-x64 / framework-dependent publishが成功した。
+- FileVersion: `0.1.2.9`。ProductVersion: `0.1.2-dev.9+2dd61d7f27a4b154eea32edcb02f2b2828cf0197`。
+- ライセンス・起動案内を含む期待する9ファイルのみ、合計393,027 bytes。ランタイム本体・PDB・調査用ツール・ログ・ユーザーデータを含まない。各ファイルのSHA-256は試作フォルダーの外側の `build-info.json` に記録した。
+- runtimeconfigは.NETCore.AppとWindowsDesktop.Appの10.0.0共有フレームワークを参照する。
+- 保持したdev.8 ZIPのSHA-256は `2ea8c356e1601f1b6269331075461764a708099a2facd4db633f32d87faaeac2` と一致した。
+- 試作の実起動・実機の改善は回答待ち。最終配布ZIPは未作成。GitHubへのpush・公開は行っていない。
