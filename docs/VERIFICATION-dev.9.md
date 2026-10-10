@@ -143,6 +143,8 @@ input-dのChordReleaseChecksは1回実行した。12個のチェックが成功�
 - 純状態試験は11/11成功。前回のwindow UP未達のまま4回連続する呼び出し、その後の単独右クリックと右ドラッグを追加し、既存の解放順序/早期UP/照合/重複/redirect/watchdog/wrap/menu guardを併せて実行した。記録は`artifacts/checks/dev9-repeat-20261011-020731/result.txt`。新しいnativeとWPF、タスクバーの実機合否は別途必要。
 - lの診断は受動GETMESSAGE（source PIDのキューからPM_REMOVEで受けたmouse/pointer/context通知、解放後の最初の移動、root/TID）のみを追加する。MSG変更や入力の生成はしない。診断登録失敗はstage 55で示し、機能のready status=21とは区別する。正式配布へ残さない。
 - ユーザーは離席中の自律調査と、手動操作が必要な時点での一時停止を指示した。入力生成禁止は後に「クリック機能/カーソル表示を維持または確実に復旧する条件で許可」へ変更された。Computer Use skill/APIを読み、公開APIの初期化まで行った。右保持＋左クリックを作る操作APIがなく、非公開helperプロトコルを拡張していない。自動マウス/キー入力、カーソル移動、窓の活性化、スクリーンショットは行っていない。input-kの常駐を維持し、lを別の新しい試作フォルダーへビルドして手動確認待ちで一時停止する。
+- ソース`677cf67d2d10e5e00d064a81112a40abc3b403fc`からinput-lをRelease / win-x64 / framework-dependentでpublish成功、警告・エラー出力なし。試作は`artifacts/previews/LinkLauncher-v0.1.2-dev.9-input-l-repeat-queue-probe/`。アプリ内は5バイナリのみ、x64 DLLは14,848 bytes。19ソースのコピーと5バイナリのSHA-256を外側のsource-snapshot/build-info.jsonへ保持した。
+- input-lは未起動。現在はinput-k（PID 9408 / input-kの実行パス）が1個常駐していることを確認した。強制終了・設定保存・データ置換・入力生成・カーソル表示操作・GitHub公開は行っていない。次はユーザーがkをトレイから終了した後、lを記録付きで起動し、HideOnPointerLeave有効の連続呼び出しとタスクバー通知を最少手動操作で確認する。正式配布ZIPは未作成。
 
 ## 試作の比較と復元
 
