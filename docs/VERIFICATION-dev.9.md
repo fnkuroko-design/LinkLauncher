@@ -146,6 +146,11 @@ input-dのChordReleaseChecksは1回実行した。12個のチェックが成功�
 - ソース`677cf67d2d10e5e00d064a81112a40abc3b403fc`からinput-lをRelease / win-x64 / framework-dependentでpublish成功、警告・エラー出力なし。試作は`artifacts/previews/LinkLauncher-v0.1.2-dev.9-input-l-repeat-queue-probe/`。アプリ内は5バイナリのみ、x64 DLLは14,848 bytes。19ソースのコピーと5バイナリのSHA-256を外側のsource-snapshot/build-info.jsonへ保持した。
 - input-lは未起動。現在はinput-k（PID 9408 / input-kの実行パス）が1個常駐していることを確認した。強制終了・設定保存・データ置換・入力生成・カーソル表示操作・GitHub公開は行っていない。次はユーザーがkをトレイから終了した後、lを記録付きで起動し、HideOnPointerLeave有効の連続呼び出しとタスクバー通知を最少手動操作で確認する。正式配布ZIPは未作成。
 
+### input-lの記録付き起動
+
+- ユーザーのinput-k終了連絡後、LinkLauncherの残存なしとinput-lの5バイナリのSHA-256一致を確認し、記録付きで起動した。本体PID 34204、実行パスはinput-lの試作フォルダー、常駐は1個。status=21、stage 54 detail 1、受動GETMESSAGEのstage 55 detail 1を確認した。実機の改善結果はまだ未確認。
+- 記録先は`artifacts/previews/LinkLauncher-v0.1.2-dev.9-input-l-repeat-queue-probe/observations/20261011-021316-4e3995949d094b63b9b54447c0a25d11/`。起動前後のlibrary.json SHA-256は`c660706fa28a1e9796882f9eeebf6c18ff5b5575d82206330d83df0fe27fd859`で一致した。設定保存・スタートアップ変更・入力生成・カーソル操作・強制終了は行っていない。
+
 ## 試作の比較と復元
 
 2版の同時起動は単一起動制御でできない。旧dev.8をトレイから終了し、dev.9の試作用EXEを起動する。比較中は設定の保存を行わず、スタートアップ登録先を変更しない。元へ戻す場合はdev.9をトレイから終了し、保持した `artifacts/releases/LinkLauncher-v0.1.2-dev.8-win-x64/LinkLauncher/LinkLauncher.exe` を起動する。
