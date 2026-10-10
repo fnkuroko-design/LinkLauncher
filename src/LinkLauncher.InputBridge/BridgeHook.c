@@ -5,6 +5,9 @@
 #define BRIDGE_GESTURE_BUDGET_MS 75UL
 #define BRIDGE_MENU_CANCEL_BUDGET_MS 25UL
 #define BRIDGE_MENU_FOCUS_WAIT_MS 50UL
+/* Nonzero still means "already attempted" to the pure guard. Value 2 is a
+ * short-lived request for the source thread to renew our return permission. */
+#define BRIDGE_FOCUS_RETURN_GRANT_PENDING 2
 #define BRIDGE_PROBE_MESSAGE (WM_APP + 0x3A)
 #define BRIDGE_PROBE_RIGHT_SEEN 10
 #define BRIDGE_PROBE_LEFT_CANDIDATE 20
@@ -527,6 +530,7 @@ UINT __cdecl BridgeRestoreMenuFocus(void)
     LASTINPUTINFO inputAfter;
     BOOL take;
     BOOL buttonsDown;
+    BOOL grantPending = FALSE;
     UINT flags = 0;
     if (!g_menuEventCancelling || g_menuFocusWindow == NULL || shared == NULL ||
         (DWORD)shared->ownerPid != GetCurrentProcessId() ||
@@ -555,6 +559,17 @@ UINT __cdecl BridgeRestoreMenuFocus(void)
     flags |= 8U;
     if (!BridgeMenuEventTargetMatches(shared, g_menuFocusWindow, root, pid, tid,
             g_menuFocusEventTick) || GetForegroundWindow() != owner) return flags;
+    if (!BridgeTryLock(shared)) return flags;
+    if (shared->menuGuard.focusAttempted == 1 &&
+        BridgeMenuGuardMatchesEvent(&shared->menuGuard,
+            (BRIDGE_U64)(ULONG_PTR)root, pid, tid, IsWindowVisible(owner),
+            g_menuFocusEventTick, GetTickCount()))
+    {
+        shared->menuGuard.focusAttempted = BRIDGE_FOCUS_RETURN_GRANT_PENDING;
+        grantPending = TRUE;
+    }
+    BridgeUnlock(shared);
+    if (!grantPending) return flags;
     flags |= 16U;
     SetForegroundWindow(root);
     /* Cross-queue activation is asynchronous. A bounded harmless message
@@ -569,6 +584,10 @@ UINT __cdecl BridgeRestoreMenuFocus(void)
             BridgeIsRootTarget(info.hwndFocus, &focusRoot, &focusPid, &focusTid) &&
             focusRoot == root && focusPid == pid && focusTid == tid) flags |= 2U;
     }
+    /* Never leave a live grant request behind if the state lock is busy.
+     * CAS preserves a cleared/rearmed guard and the source's consumed request. */
+    InterlockedCompareExchange(&shared->menuGuard.focusAttempted,
+        1, BRIDGE_FOCUS_RETURN_GRANT_PENDING);
     inputAfter.cbSize = (UINT)sizeof(inputAfter);
     foreground = GetForegroundWindow();
     if (GetLastInputInfo(&inputAfter) && inputAfter.dwTime == inputBefore.dwTime &&
@@ -577,7 +596,7 @@ UINT __cdecl BridgeRestoreMenuFocus(void)
         (foreground == owner || foreground == root))
     {
         /* Also supersede a timed-out asynchronous source activation request. */
-        SetForegroundWindow(owner);
+        if (SetForegroundWindow(owner)) flags |= 64U;
         if (GetForegroundWindow() == owner) flags |= 4U;
     }
     else flags |= 32U; /* New input, hide, stale request or unrelated foreground. */
@@ -594,6 +613,40 @@ static LRESULT CALLBACK BridgeCallWndProc(int code, WPARAM wParam, LPARAM lParam
     {
         const CWPSTRUCT *event = (const CWPSTRUCT *)lParam;
         BRIDGE_SHARED *shared;
+        if (event->message == WM_NULL)
+        {
+            HWND root = NULL;
+            DWORD pid = 0;
+            DWORD tid = 0;
+            BOOL grantReturn = FALSE;
+            shared = BridgeEnsureShared();
+            /* Only the live focus round-trip can arm this request. Grant from
+             * the actual foreground source thread after activation is processed.
+             * This neither activates a window nor consumes/modifies WM_NULL. */
+            if (shared != NULL && InterlockedCompareExchange(&shared->enabled, 0, 0) != 0 &&
+                BridgeIsRootTarget(event->hwnd, &root, &pid, &tid) && event->hwnd == root &&
+                pid != (DWORD)shared->ownerPid && pid == GetCurrentProcessId() &&
+                tid == GetCurrentThreadId() && GetForegroundWindow() == root &&
+                ((USHORT)GetAsyncKeyState(VK_RBUTTON) & 0x8000U) == 0 &&
+                ((USHORT)GetAsyncKeyState(VK_LBUTTON) & 0x8000U) == 0 &&
+                BridgeReadOtherButtons() == 0 && BridgeTryLock(shared))
+            {
+                if (shared->menuGuard.focusAttempted == BRIDGE_FOCUS_RETURN_GRANT_PENDING &&
+                    BridgeMenuGuardMatches(&shared->menuGuard,
+                        (BRIDGE_U64)(ULONG_PTR)root, pid, tid,
+                        IsWindowVisible((HWND)(ULONG_PTR)shared->ownerHwnd), GetTickCount()))
+                {
+                    shared->menuGuard.focusAttempted = 1;
+                    grantReturn = TRUE;
+                }
+                BridgeUnlock(shared);
+            }
+            if (grantReturn)
+            {
+                BOOL granted = AllowSetForegroundWindow((DWORD)shared->ownerPid);
+                BridgePostTrace(shared, 23, WM_NULL, granted ? 1UL : 0UL);
+            }
+        }
 #if defined(BRIDGE_INPUT_PROBE) && defined(_WIN64)
         switch (event->message)
         {
