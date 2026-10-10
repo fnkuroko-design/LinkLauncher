@@ -48,6 +48,12 @@ Release / win-x64ビルドは警告・エラーなしで成功した。Computer 
 
 ## 配布物
 
-ソースをローカルGitに保存後、既存のPublish.ps1で新しいdev.8成果物を作成する。ZIPのルートは従来どおり `LinkLauncher/` 1つ、アーカイブ名は `LinkLauncher-v0.1.2-dev.8-win-x64.zip`。ランタイム・ユーザーデータ・PDB・診断ログを含めず、ライセンスと導入案内を同梱する。GitHubへのpush・Release公開は行わない。
-
-作成後のソースSHA・アーカイブSHA-256と内容確認は、この欄へ追記する。
+- 配布ソース: `086c0648d40bb5aaa8d0a50191e2657027f35b9a`。既存のPublish.ps1でRelease / win-x64 / framework-dependent publishが警告・エラーなしで成功した。
+- ZIP: `artifacts/releases/LinkLauncher-v0.1.2-dev.8-win-x64.zip`、178,034 bytes（約174 KiB）。圧縮前のファイル合計は385,404 bytes。
+- SHA-256: `2ea8c356e1601f1b6269331075461764a708099a2facd4db633f32d87faaeac2`。同梱先のSHA-256ファイルと再計算値が一致した。
+- FileVersion: `0.1.2.8`。ProductVersion: `0.1.2-dev.8+086c0648d40bb5aaa8d0a50191e2657027f35b9a`。
+- アーカイブ内の全エントリーが `LinkLauncher/` 配下であること、期待する9ファイルだけを含むこと、各エントリーの内容ハッシュが配布フォルダーの全ファイルと一致することをストリームで確認した。検証用の展開・実行は行っていない。
+- EXE、DLL、deps.json、runtimeconfig.json、README、START_HERE.html、MIT LICENSE、THIRD_PARTY_NOTICES、.NET apphostのライセンスを含む。ランタイム本体・ユーザーデータ・PDB・診断ログを含まない。
+- runtimeconfigはMicrosoft.NETCore.AppとMicrosoft.WindowsDesktop.Appの10.0.0共有フレームワークを参照する。ランタイムの自動導入はせず、公式の.NET 10 Desktop Runtimeページへの案内を維持する。
+- dev.7 ZIPのSHA-256は `70ebcd6a85c886093dce7801937ed9a7ffad362e7c1d3e6ee9103262e5bf2899` と一致した。旧成果物の上書き・移動・削除は行っていない。
+- 作成後も同じPID 26608 / dev.7 EXEが実行中であることを読み取りで確認した。dev.8 EXEの実起動は未確認。GitHubへのpush・Release公開は行っていない。
