@@ -300,12 +300,12 @@ public sealed class DesktopIntegration : IDisposable
     }
 
     /// <summary>
-    /// カーソル位置をGetCursorPosの画面座標（ピクセル）で返します。
+    /// カーソル位置を物理画面座標（ピクセル）で返します。
     /// WPFのDIP座標が必要な場合は、呼び出し側で変換してください。
     /// </summary>
     public static bool TryGetCursor(out System.Windows.Point point)
     {
-        if (GetCursorPos(out POINT nativePoint))
+        if (GetPhysicalCursorPos(out POINT nativePoint))
         {
             point = new System.Windows.Point(nativePoint.X, nativePoint.Y);
             return true;
@@ -818,7 +818,7 @@ public sealed class DesktopIntegration : IDisposable
 
         MouseActivationButton button = _mouseActivationState.Button;
         _mouseActivationState.Cancel();
-        if (!GetCursorPos(out POINT currentPoint) || !CanSafelyInjectAt(currentPoint))
+        if (!GetPhysicalCursorPos(out POINT currentPoint) || !CanSafelyInjectAt(currentPoint))
         {
             QueueWarning("保留中のボタンDownを復元できません。対象ウィンドウの権限を確認できないため、入力を注入しませんでした。");
             return false;
@@ -1013,14 +1013,7 @@ public sealed class DesktopIntegration : IDisposable
             return false;
         }
 
-        IntPtr target = WindowFromPoint(point);
-        if (target == IntPtr.Zero)
-        {
-            return true;
-        }
-
-        uint threadId = GetWindowThreadProcessId(target, out uint processId);
-        return threadId == 0 || processId != _processId;
+        return DesktopHitTest.ProcessAtPhysicalPoint(point.X, point.Y) != _processId;
     }
 
     private void QueueExternalButtonDown()
@@ -1186,13 +1179,7 @@ public sealed class DesktopIntegration : IDisposable
 
     private bool CanSafelyInterceptAt(POINT point)
     {
-        IntPtr window = WindowFromPoint(point);
-        if (window == IntPtr.Zero)
-        {
-            return false;
-        }
-
-        GetWindowThreadProcessId(window, out uint processId);
+        uint processId = DesktopHitTest.ProcessAtPhysicalPoint(point.X, point.Y);
         return processId != 0
             && processId != (uint)Environment.ProcessId
             && CanSafelyInjectIntoProcess(processId);
@@ -1200,13 +1187,7 @@ public sealed class DesktopIntegration : IDisposable
 
     private bool CanSafelyInjectAt(POINT point)
     {
-        IntPtr window = WindowFromPoint(point);
-        if (window == IntPtr.Zero)
-        {
-            return false;
-        }
-
-        GetWindowThreadProcessId(window, out uint processId);
+        uint processId = DesktopHitTest.ProcessAtPhysicalPoint(point.X, point.Y);
         return processId != 0 && CanSafelyInjectIntoProcess(processId);
     }
 
@@ -1457,16 +1438,10 @@ public sealed class DesktopIntegration : IDisposable
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool GetCursorPos(out POINT point);
-
-    [DllImport("user32.dll")]
-    private static extern IntPtr WindowFromPoint(POINT point);
+    private static extern bool GetPhysicalCursorPos(out POINT point);
 
     [DllImport("user32.dll")]
     private static extern int GetSystemMetrics(int index);
-
-    [DllImport("user32.dll")]
-    private static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
 
     [DllImport("user32.dll")]
     private static extern short GetAsyncKeyState(uint virtualKey);

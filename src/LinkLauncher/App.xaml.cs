@@ -15,7 +15,6 @@ public partial class App : Application
 
     protected override void OnStartup(StartupEventArgs e)
     {
-        System.Windows.Forms.Application.SetHighDpiMode(System.Windows.Forms.HighDpiMode.PerMonitorV2);
         base.OnStartup(e);
         DispatcherUnhandledException += OnUnhandled;
         bool startHidden = Array.IndexOf(e.Args, "--background") >= 0;
