@@ -31,3 +31,11 @@
 - 起動直前・直後の `library.json` ハッシュは一致。設定保存、スタートアップ先変更、マウス入力生成、カーソル移動、強制停止は行っていません。
 
 ローカルの配布確認記録は `artifacts/checks/release-v0.1.2-20261011-034736/` に保持し、公開ソース・配布ZIPには含めません。
+
+## GitHub公開
+
+- 公開リポジトリ `fnkuroko-design/LinkLauncher` のmainへ反映し、リモートの正式タグ `v0.1.2` が配布ソース `aed347d9dce2cec5ba0c09b8929e432bc8047a9c` を指すことを確認しました。
+- [正式リリース](https://github.com/fnkuroko-design/LinkLauncher/releases/tag/v0.1.2)を最新リリースとして公開しました。draft・prereleaseはともにfalse。ZIP（188,530 bytes）とSHA-256ファイル（99 bytes）の2点を添付しました。
+- 添付ファイルを再取得し、ZIPとSHA-256ファイルの両方がローカル成果物と一致しました。公開後にも認証情報を付けずに取得し、サイズ・SHA-256の一致を確認しました。GitHubのasset digestも同じ値です。
+- [GitHub ActionsのWindows x64 ZIPビルド](https://github.com/fnkuroko-design/LinkLauncher/actions/runs/38077282111)は成功。対象コミットは `cf81bf52436bd63cfc5f07c7de299c1fd78ed4a8`（配布・起動確認記録を含む）です。Actionsで生成したZIPは、ローカル検証済みの公開添付ZIPとは別のビルド成果物です。
+- 既存リリースや完成済みdev.9の成果物を変更せず、正式版EXEの単独常駐を確認しました。スタートアップ登録先は変更していません。
