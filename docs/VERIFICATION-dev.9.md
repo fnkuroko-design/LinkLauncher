@@ -56,9 +56,13 @@ input-dのChordReleaseChecksは1回実行した。12個のチェックが成功�
 - input-dのユーザー確認は2回とも表示されず、元の右メニューが出た。左クリック停止の有無はこの回答だけでは確定していない。
 - dのログは2回とも候補・対象照合・受け窓の準備がtrueだったが、受け窓のWM_MOUSEACTIVATE/WM_LBUTTONDOWNは記録されず、WaitingForNativeDownのまま準備タイマーで中断した。元の物理LEFTDOWNを通す途中で窓を表示する方法では、この再現の配送先は切り替わらなかったと推定する。未達をtimestamp不一致・capture取得失敗と混同しない。input-dも不合格で、正式配布には使わない。
 - input-e-native-probe: `artifacts/previews/LinkLauncher-v0.1.2-dev.9-input-e-native-probe/LinkLauncher/`に7個の試作バイナリをpublishした。3個の補助バイナリ合計は22,528 bytes。ソース・バイナリのSHA-256とソースコピーを試作フォルダーの外側へ保持する。ビルド中にパス引数・ハッシュ取得・子プロセス待機・共有構造体のalignment・CRTを使わないコピー処理・x86 export/entryを修正した。最終ビルドが成功するまでの失敗は実機検証に数えない。
-- input-eの実機確認は未実施。WH_MOUSEの配送、元アプリでのcapture解除、UI ACKの時間関係は純状態試験の対象外。まだ修正完了・正式配布とは扱わない。
+- input-eのWH_MOUSEの配送、元アプリでのcapture解除、UI ACKの時間関係は純状態試験の対象外。下記の実機結果は不合格で、修正完了・正式配布とは扱わない。
 - 2026-10-11: ユーザーがinput-dを終了した連絡後、残存する本体・補助プロセスがないことを確認した。input-eの7バイナリのSHA-256が`build-info.json`と一致した後、rootが記録設定付き`--background`で起動した。本体PID 3832、x86補助PID 10216（親3832）、両EXEの試作パスを確認した。起動ログは`nativeStatus=7`で、x64/x86フック登録と有効化を確認した。これは登録・起動の証拠であり、実際の入力配送や呼び出し成功の証拠ではない。
-- この起動の記録先は`artifacts/previews/LinkLauncher-v0.1.2-dev.9-input-e-native-probe/observations/20261011-002431-4b4f3fe9015d41e38462f01d008d64e1/`。`launch-info.json`に起動パス・PID・ソースコミットを保存した。`library.json`のSHA-256は起動前後で一致し、設定保存・スタートアップ登録変更・入力生成・カーソル自動移動は行っていない。デスクトップ空白での2回の手動呼び出し結果を待っている。
+- この起動の記録先は`artifacts/previews/LinkLauncher-v0.1.2-dev.9-input-e-native-probe/observations/20261011-002431-4b4f3fe9015d41e38462f01d008d64e1/`。`launch-info.json`に起動パス・PID・ソースコミットを保存した。`library.json`のSHA-256は起動前後で一致し、設定保存・スタートアップ登録変更・入力生成・カーソル自動移動は行っていない。
+- input-eのユーザー確認は2回とも表示されず、元の右メニューが出た。解放後の左クリック停止の有無はこの回答だけでは確定していない。追加のPDF手書き・Codexでの操作は依頼していない。
+- eのログにはC#の低レベルフックの左右DOWNがあり、nativeの候補成立・候補拒否・UI通知のstage記録は一件もない。nativeStatus=7を実際の仲介成功と混同しない。現行のstageはコールバック入口を記録していないため、未到達と入口後の早期returnはまだ区別できない。
+- 読み取り専用でDLLのPEセクションを確認した。両DLLの`.LLCFG`はREAD/WRITE/SHAREDで存在し、実行中の本体・補助DLLの同セクションにowner PID 3832とHWND 0x690D8Aを確認した。本体・補助・ExplorerのSessionIdは1、integrity RIDは0x2000（Medium）で一致した。ExplorerのExtensionPoint/Signature/ImageLoad mitigation flagsはそれぞれ0。この時点のExplorerのモジュール一覧にhook DLLはなかった。これらは入力対象PID/TIDの確定やフック未到達の断定にはならない。
+- 次のinput-fは入力方式を変える版ではなく、`BRIDGE_INPUT_PROBE`限定の共有カウンターで入口と早期returnを切り分ける診断試作。負のhook codeは即座に通し、観測のための入力生成・カーソル移動・ファイルI/O・同期UI送信をコールバックへ追加しない。正式配布物には診断カウンターとセクションを含めない。
 
 ## 試作の比較と復元
 

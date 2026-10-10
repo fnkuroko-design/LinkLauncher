@@ -16,6 +16,76 @@ static volatile ULONGLONG g_cfgOwnerHwnd = 0;
 #pragma data_seg()
 #pragma comment(linker, "/SECTION:.LLCFG,RWS")
 
+#if defined(BRIDGE_INPUT_PROBE)
+typedef struct BRIDGE_PROBE_STATS
+{
+    volatile LONG callbackTotal;
+    volatile LONG lastCode;
+    volatile LONG lastMessage;
+    volatile LONG hcNoRemove;
+    volatile LONG nonAction;
+    volatile LONG sharedAcquireFailure;
+    volatile LONG ownerPidZero;
+    volatile LONG mapNameFailure;
+    volatile LONG initBusy;
+    volatile LONG openMappingFailure;
+    volatile LONG mapViewFailure;
+    volatile LONG validationFailure;
+    volatile LONG lastSharedFailure;
+    volatile LONG lastMappingError;
+    volatile LONG lastValidationFailure;
+    volatile LONG disabled;
+    volatile LONG nullMouse;
+    volatile LONG targetLookupFailure;
+    volatile LONG contextSkipped;
+    volatile LONG contextAccepted;
+    volatile LONG rightDown;
+    volatile LONG leftDown;
+    volatile LONG up;
+    volatile LONG candidate;
+    volatile LONG rejected;
+    volatile LONG begin;
+    volatile LONG ack;
+    volatile LONG complete;
+    volatile LONG lastTargetPid;
+    volatile LONG lastTargetTid;
+    volatile LONG lastCurrentPid;
+    volatile LONG lastCurrentTid;
+    volatile LONG lockFailure;
+} BRIDGE_PROBE_STATS;
+typedef char BRIDGE_PROBE_SIZE_CHECK[(sizeof(BRIDGE_PROBE_STATS) == 132) ? 1 : -1];
+
+enum BRIDGE_PROBE_SHARED_FAILURE
+{
+    BRIDGE_PROBE_SHARED_FAILURE_NONE = 0,
+    BRIDGE_PROBE_SHARED_FAILURE_OWNER_PID = 1,
+    BRIDGE_PROBE_SHARED_FAILURE_MAP_NAME = 2,
+    BRIDGE_PROBE_SHARED_FAILURE_INIT_BUSY = 3,
+    BRIDGE_PROBE_SHARED_FAILURE_OPEN_MAPPING = 4,
+    BRIDGE_PROBE_SHARED_FAILURE_MAP_VIEW = 5,
+    BRIDGE_PROBE_SHARED_FAILURE_VALIDATION = 6
+};
+
+enum BRIDGE_PROBE_VALIDATION_FAILURE
+{
+    BRIDGE_PROBE_VALIDATION_MAGIC = 1,
+    BRIDGE_PROBE_VALIDATION_VERSION = 2,
+    BRIDGE_PROBE_VALIDATION_SIZE = 3,
+    BRIDGE_PROBE_VALIDATION_OWNER_PID = 4
+};
+
+#pragma data_seg(".LLPRB")
+static volatile BRIDGE_PROBE_STATS g_probeStats = { 0 };
+#pragma data_seg()
+#pragma comment(linker, "/SECTION:.LLPRB,RWS")
+
+#define BRIDGE_PROBE_COUNT(field) InterlockedIncrement(&g_probeStats.field)
+#define BRIDGE_PROBE_SET(field, value) InterlockedExchange(&g_probeStats.field, (LONG)(value))
+#else
+#define BRIDGE_PROBE_COUNT(field) ((void)0)
+#define BRIDGE_PROBE_SET(field, value) ((void)0)
+#endif
+
 static HINSTANCE g_module = NULL;
 static HHOOK g_mouseHook = NULL;
 static HANDLE g_mapping = NULL;
@@ -97,26 +167,74 @@ static BRIDGE_SHARED *BridgeEnsureShared(void)
 
     state = InterlockedCompareExchange(&g_mapInitState, 0, 0);
     if (state == 2) return g_shared;
-    if (InterlockedCompareExchange(&g_mapInitState, 1, 0) != 0) return NULL;
+    if (InterlockedCompareExchange(&g_mapInitState, 1, 0) != 0)
+    {
+        BRIDGE_PROBE_COUNT(sharedAcquireFailure);
+        BRIDGE_PROBE_COUNT(initBusy);
+        BRIDGE_PROBE_SET(lastSharedFailure, BRIDGE_PROBE_SHARED_FAILURE_INIT_BUSY);
+        BRIDGE_PROBE_SET(lastMappingError, 0);
+        return NULL;
+    }
 
     ownerPid = InterlockedCompareExchange(&g_cfgOwnerPid, 0, 0);
-    if (ownerPid <= 0 || !BridgeMakeMapName((DWORD)ownerPid, mapName, BRIDGE_MAP_NAME_CAPACITY))
+    if (ownerPid <= 0)
     {
+        BRIDGE_PROBE_COUNT(sharedAcquireFailure);
+        BRIDGE_PROBE_COUNT(ownerPidZero);
+        BRIDGE_PROBE_SET(lastSharedFailure, BRIDGE_PROBE_SHARED_FAILURE_OWNER_PID);
+        BRIDGE_PROBE_SET(lastMappingError, 0);
+        InterlockedExchange(&g_mapInitState, 0);
+        return NULL;
+    }
+    if (!BridgeMakeMapName((DWORD)ownerPid, mapName, BRIDGE_MAP_NAME_CAPACITY))
+    {
+        BRIDGE_PROBE_COUNT(sharedAcquireFailure);
+        BRIDGE_PROBE_COUNT(mapNameFailure);
+        BRIDGE_PROBE_SET(lastSharedFailure, BRIDGE_PROBE_SHARED_FAILURE_MAP_NAME);
+        BRIDGE_PROBE_SET(lastMappingError, 0);
         InterlockedExchange(&g_mapInitState, 0);
         return NULL;
     }
     mapping = OpenFileMappingW(FILE_MAP_READ | FILE_MAP_WRITE, FALSE, mapName);
     if (mapping == NULL)
     {
+        BRIDGE_PROBE_COUNT(sharedAcquireFailure);
+        BRIDGE_PROBE_COUNT(openMappingFailure);
+        BRIDGE_PROBE_SET(lastSharedFailure, BRIDGE_PROBE_SHARED_FAILURE_OPEN_MAPPING);
+        BRIDGE_PROBE_SET(lastMappingError, GetLastError());
         InterlockedExchange(&g_mapInitState, 0);
         return NULL;
     }
     shared = (BRIDGE_SHARED *)MapViewOfFile(mapping, FILE_MAP_READ | FILE_MAP_WRITE, 0, 0, sizeof(BRIDGE_SHARED));
-    if (shared == NULL || shared->magic != (LONG)BRIDGE_SHARED_MAGIC ||
+    if (shared == NULL)
+    {
+        BRIDGE_PROBE_COUNT(sharedAcquireFailure);
+        BRIDGE_PROBE_COUNT(mapViewFailure);
+        BRIDGE_PROBE_SET(lastSharedFailure, BRIDGE_PROBE_SHARED_FAILURE_MAP_VIEW);
+        BRIDGE_PROBE_SET(lastMappingError, GetLastError());
+        CloseHandle(mapping);
+        InterlockedExchange(&g_mapInitState, 0);
+        return NULL;
+    }
+    if (shared->magic != (LONG)BRIDGE_SHARED_MAGIC ||
         shared->version != (LONG)BRIDGE_SHARED_VERSION ||
         shared->byteSize != (LONG)sizeof(BRIDGE_SHARED) || shared->ownerPid != ownerPid)
     {
-        if (shared != NULL) UnmapViewOfFile(shared);
+#if defined(BRIDGE_INPUT_PROBE)
+        LONG validationFailure = shared->magic != (LONG)BRIDGE_SHARED_MAGIC
+            ? BRIDGE_PROBE_VALIDATION_MAGIC
+            : (shared->version != (LONG)BRIDGE_SHARED_VERSION
+                ? BRIDGE_PROBE_VALIDATION_VERSION
+                : (shared->byteSize != (LONG)sizeof(BRIDGE_SHARED)
+                    ? BRIDGE_PROBE_VALIDATION_SIZE
+                    : BRIDGE_PROBE_VALIDATION_OWNER_PID));
+        BRIDGE_PROBE_COUNT(sharedAcquireFailure);
+        BRIDGE_PROBE_COUNT(validationFailure);
+        BRIDGE_PROBE_SET(lastSharedFailure, BRIDGE_PROBE_SHARED_FAILURE_VALIDATION);
+        BRIDGE_PROBE_SET(lastMappingError, 0);
+        BRIDGE_PROBE_SET(lastValidationFailure, validationFailure);
+#endif
+        UnmapViewOfFile(shared);
         CloseHandle(mapping);
         InterlockedExchange(&g_mapInitState, 0);
         return NULL;
@@ -135,6 +253,9 @@ static void BridgePostOwnerMessage(BRIDGE_SHARED *shared, DWORD sequence, LPARAM
     {
         return;
     }
+#if defined(BRIDGE_INPUT_PROBE)
+    if (phase == BRIDGE_OWNER_COMPLETE) BRIDGE_PROBE_COUNT(complete);
+#endif
     owner = (HWND)(ULONG_PTR)shared->ownerHwnd;
     if (owner != NULL)
     {
@@ -282,6 +403,7 @@ static BOOL BridgeBeginGesture(
         return FALSE;
     }
 
+    BRIDGE_PROBE_COUNT(ack);
     BridgePostProbe(shared, BRIDGE_PROBE_ACK, (LPARAM)uiResult);
 
     if (uiResult == 1)
@@ -314,6 +436,8 @@ static LRESULT CALLBACK BridgeMouseProc(int code, WPARAM wParam, LPARAM lParam)
     MOUSEHOOKSTRUCT *mouse;
     BRIDGE_SHARED *shared;
     DWORD tick;
+    DWORD currentPid;
+    DWORD currentTid;
     HWND targetRoot = NULL;
     DWORD targetPid = 0;
     DWORD targetTid = 0;
@@ -335,31 +459,82 @@ static LRESULT CALLBACK BridgeMouseProc(int code, WPARAM wParam, LPARAM lParam)
     BOOL activeCancelled = FALSE;
     BOOL probeLeft = FALSE;
 
-    if (code != HC_ACTION || wParam == HC_NOREMOVE)
+    if (code < 0)
     {
         return CallNextHookEx(NULL, code, wParam, lParam);
     }
-    shared = BridgeEnsureShared();
-    if (shared == NULL || InterlockedCompareExchange(&shared->enabled, 0, 0) == 0)
+#if defined(BRIDGE_INPUT_PROBE)
+    BRIDGE_PROBE_COUNT(callbackTotal);
+    BRIDGE_PROBE_SET(lastCode, code);
+    BRIDGE_PROBE_SET(lastMessage, (UINT)wParam);
+#endif
+    if (code == HC_NOREMOVE)
     {
+        BRIDGE_PROBE_COUNT(hcNoRemove);
+        return CallNextHookEx(NULL, code, wParam, lParam);
+    }
+    if (code != HC_ACTION)
+    {
+        BRIDGE_PROBE_COUNT(nonAction);
+        return CallNextHookEx(NULL, code, wParam, lParam);
+    }
+
+    shared = BridgeEnsureShared();
+    if (shared == NULL)
+    {
+        return CallNextHookEx(NULL, code, wParam, lParam);
+    }
+    if (InterlockedCompareExchange(&shared->enabled, 0, 0) == 0)
+    {
+        BRIDGE_PROBE_COUNT(disabled);
         return CallNextHookEx(NULL, code, wParam, lParam);
     }
 
     mouse = (MOUSEHOOKSTRUCT *)lParam;
-    if (mouse == NULL) return CallNextHookEx(NULL, code, wParam, lParam);
+    if (mouse == NULL)
+    {
+        BRIDGE_PROBE_COUNT(nullMouse);
+        return CallNextHookEx(NULL, code, wParam, lParam);
+    }
     tick = GetTickCount();
     ownerPid = (DWORD)shared->ownerPid;
     ownerRoot = (HWND)(ULONG_PTR)shared->ownerHwnd;
 
-    if (!BridgeIsRootTarget(mouse->hwnd, &targetRoot, &targetPid, &targetTid) ||
-        targetPid != GetCurrentProcessId() || targetTid != GetCurrentThreadId())
+    if (!BridgeIsRootTarget(mouse->hwnd, &targetRoot, &targetPid, &targetTid))
     {
+        BRIDGE_PROBE_COUNT(targetLookupFailure);
+        BRIDGE_PROBE_SET(lastTargetPid, 0);
+        BRIDGE_PROBE_SET(lastTargetTid, 0);
+        BRIDGE_PROBE_SET(lastCurrentPid, 0);
+        BRIDGE_PROBE_SET(lastCurrentTid, 0);
         return CallNextHookEx(NULL, code, wParam, lParam);
     }
+    currentPid = GetCurrentProcessId();
+    BRIDGE_PROBE_SET(lastTargetPid, targetPid);
+    BRIDGE_PROBE_SET(lastTargetTid, targetTid);
+    BRIDGE_PROBE_SET(lastCurrentPid, currentPid);
+    if (targetPid != currentPid)
+    {
+        BRIDGE_PROBE_SET(lastCurrentTid, 0);
+        BRIDGE_PROBE_COUNT(contextSkipped);
+        return CallNextHookEx(NULL, code, wParam, lParam);
+    }
+    currentTid = GetCurrentThreadId();
+    BRIDGE_PROBE_SET(lastCurrentTid, currentTid);
+    if (targetTid != currentTid)
+    {
+        BRIDGE_PROBE_COUNT(contextSkipped);
+        return CallNextHookEx(NULL, code, wParam, lParam);
+    }
+    BRIDGE_PROBE_COUNT(contextAccepted);
 
     if (wParam == WM_MOUSEMOVE || wParam == WM_NCMOUSEMOVE)
     {
-        if (!BridgeTryLock(shared)) return CallNextHookEx(NULL, code, wParam, lParam);
+        if (!BridgeTryLock(shared))
+        {
+            BRIDGE_PROBE_COUNT(lockFailure);
+            return CallNextHookEx(NULL, code, wParam, lParam);
+        }
         BridgeStateOnMove(&shared->state, mouse->pt.x, mouse->pt.y);
         BridgeUnlock(shared);
         return CallNextHookEx(NULL, code, wParam, lParam);
@@ -367,7 +542,12 @@ static LRESULT CALLBACK BridgeMouseProc(int code, WPARAM wParam, LPARAM lParam)
 
     if (BridgeIsRightDown((UINT)wParam))
     {
-        if (!BridgeTryLock(shared)) return CallNextHookEx(NULL, code, wParam, lParam);
+        BRIDGE_PROBE_COUNT(rightDown);
+        if (!BridgeTryLock(shared))
+        {
+            BRIDGE_PROBE_COUNT(lockFailure);
+            return CallNextHookEx(NULL, code, wParam, lParam);
+        }
         if (shared->state.phase == BRIDGE_PHASE_ACTIVE &&
             (BRIDGE_U32)(tick - shared->state.startTick) >= BRIDGE_WATCHDOG_MS)
         {
@@ -411,16 +591,25 @@ static LRESULT CALLBACK BridgeMouseProc(int code, WPARAM wParam, LPARAM lParam)
         {
             BridgePostOwnerMessage(shared, (DWORD)supersededSequence, BRIDGE_OWNER_COMPLETE);
         }
-        if (candidateStarted) BridgePostProbe(shared, BRIDGE_PROBE_RIGHT_SEEN, 0);
+        if (candidateStarted)
+        {
+            BRIDGE_PROBE_COUNT(candidate);
+            BridgePostProbe(shared, BRIDGE_PROBE_RIGHT_SEEN, 0);
+        }
         return CallNextHookEx(NULL, code, wParam, lParam);
     }
 
     if (BridgeIsRightUp((UINT)wParam) || BridgeIsLeftUp((UINT)wParam))
     {
+        BRIDGE_PROBE_COUNT(up);
         LONG button = BridgeIsRightUp((UINT)wParam)
             ? (LONG)BRIDGE_BUTTON_RIGHT
             : (LONG)BRIDGE_BUTTON_LEFT;
-        if (!BridgeTryLock(shared)) return CallNextHookEx(NULL, code, wParam, lParam);
+        if (!BridgeTryLock(shared))
+        {
+            BRIDGE_PROBE_COUNT(lockFailure);
+            return CallNextHookEx(NULL, code, wParam, lParam);
+        }
         targetMatches = BridgeStateIsChordTarget(
             &shared->state,
             (BRIDGE_U64)(ULONG_PTR)targetRoot,
@@ -442,6 +631,7 @@ static LRESULT CALLBACK BridgeMouseProc(int code, WPARAM wParam, LPARAM lParam)
 
     if (BridgeIsLeftDown((UINT)wParam))
     {
+        BRIDGE_PROBE_COUNT(leftDown);
         if (targetPid != ownerPid)
         {
             probeLeft = TRUE;
@@ -452,7 +642,11 @@ static LRESULT CALLBACK BridgeMouseProc(int code, WPARAM wParam, LPARAM lParam)
                 (GetKeyState(VK_XBUTTON2) & 0x8000) != 0;
             sourceForeground = GetForegroundWindow();
         }
-        if (!BridgeTryLock(shared)) return CallNextHookEx(NULL, code, wParam, lParam);
+        if (!BridgeTryLock(shared))
+        {
+            BRIDGE_PROBE_COUNT(lockFailure);
+            return CallNextHookEx(NULL, code, wParam, lParam);
+        }
         if (shared->state.phase == BRIDGE_PHASE_ACTIVE)
         {
             if (shared->state.requestValid && shared->state.pendingButtons != 0)
@@ -498,6 +692,7 @@ static LRESULT CALLBACK BridgeMouseProc(int code, WPARAM wParam, LPARAM lParam)
         }
         if (decision == BRIDGE_DECISION_BEGIN)
         {
+            BRIDGE_PROBE_COUNT(begin);
             sequence = shared->state.requestSequence;
         }
         BridgeUnlock(shared);
@@ -507,6 +702,7 @@ static LRESULT CALLBACK BridgeMouseProc(int code, WPARAM wParam, LPARAM lParam)
         }
         if (probeLeft && decision != BRIDGE_DECISION_BEGIN)
         {
+            BRIDGE_PROBE_COUNT(rejected);
             BridgePostProbe(shared, BRIDGE_PROBE_LEFT_REJECTED, rejectionDetail);
         }
         if (activeCancelled) return CallNextHookEx(NULL, code, wParam, lParam);
