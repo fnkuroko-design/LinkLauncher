@@ -13,6 +13,7 @@
 #define BRIDGE_PROBE_FOREGROUND 40
 #define BRIDGE_PROBE_CONTEXT 41
 #define BRIDGE_TRACE_MESSAGE (WM_APP + 0x3B)
+#define BRIDGE_TRACE_WINDOW_MS 10000UL
 
 #define BRIDGE_OTHER_BUTTON_MIDDLE 0x00000001L
 #define BRIDGE_OTHER_BUTTON_X1 0x00000002L
@@ -124,6 +125,10 @@ static LONG BridgeReadOtherButtons(void)
 static HINSTANCE g_module = NULL;
 static HHOOK g_mouseHook = NULL;
 static HHOOK g_callWndHook = NULL;
+#if defined(BRIDGE_INPUT_PROBE) && defined(_WIN64)
+static HHOOK g_getMessageProbeHook = NULL;
+static BOOL g_probeNextMove = FALSE;
+#endif
 static HANDLE g_mapping = NULL;
 static BRIDGE_SHARED *g_shared = NULL;
 static volatile LONG g_mapInitState = 0;
@@ -322,7 +327,7 @@ static BOOL BridgeTraceIsCurrent(DWORD pid, DWORD tid)
     DWORD traceTick = (DWORD)InterlockedCompareExchange(&g_traceTick, 0, 0);
     return pid == (DWORD)InterlockedCompareExchange(&g_tracePid, 0, 0) &&
         tid == (DWORD)InterlockedCompareExchange(&g_traceTid, 0, 0) &&
-        (DWORD)(GetTickCount() - traceTick) <= 3000UL;
+        (DWORD)(GetTickCount() - traceTick) <= BRIDGE_TRACE_WINDOW_MS;
 }
 #endif
 
@@ -340,7 +345,7 @@ static void BridgePostTrace(BRIDGE_SHARED *shared, UINT kind, UINT message, DWOR
     ULONGLONG payload;
     if (shared == NULL || InterlockedCompareExchange(&shared->enabled, 0, 0) == 0) return;
     if (InterlockedCompareExchange(&g_tracePid, 0, 0) == 0 ||
-        (DWORD)(GetTickCount() - (DWORD)InterlockedCompareExchange(&g_traceTick, 0, 0)) > 3000UL ||
+        (DWORD)(GetTickCount() - (DWORD)InterlockedCompareExchange(&g_traceTick, 0, 0)) > BRIDGE_TRACE_WINDOW_MS ||
         (GetCurrentProcessId() != (DWORD)InterlockedCompareExchange(&g_tracePid, 0, 0) &&
             GetCurrentProcessId() != (DWORD)shared->ownerPid)) return;
     owner = (HWND)(ULONG_PTR)shared->ownerHwnd;
@@ -374,6 +379,47 @@ static BOOL BridgeIsRootTarget(HWND window, HWND *root, DWORD *pid, DWORD *tid)
     if (tid != NULL) *tid = targetTid;
     return TRUE;
 }
+
+#if defined(BRIDGE_INPUT_PROBE) && defined(_WIN64)
+/* Read queued pointer/mouse paths only. Do not modify or consume any MSG. */
+static LRESULT CALLBACK BridgeGetMessageProbeProc(int code, WPARAM wParam, LPARAM lParam)
+{
+    if (code == HC_ACTION && wParam == PM_REMOVE && lParam != 0 &&
+        BridgeTraceIsCurrent(GetCurrentProcessId(),
+            (DWORD)InterlockedCompareExchange(&g_traceTid, 0, 0)))
+    {
+        const MSG *event = (const MSG *)lParam;
+        BOOL record = FALSE;
+        switch (event->message)
+        {
+        case WM_RBUTTONDOWN: case WM_RBUTTONUP: case WM_LBUTTONDOWN: case WM_LBUTTONUP:
+        case WM_NCRBUTTONDOWN: case WM_NCRBUTTONUP: case WM_NCLBUTTONDOWN: case WM_NCLBUTTONUP:
+        case WM_CONTEXTMENU: case WM_POINTERDOWN: case WM_POINTERUP: case WM_POINTERCAPTURECHANGED:
+            record = TRUE;
+            break;
+        case WM_MOUSEMOVE: case WM_NCMOUSEMOVE: case WM_POINTERUPDATE:
+            if (g_probeNextMove) { record = TRUE; g_probeNextMove = FALSE; }
+            break;
+        default:
+            break;
+        }
+        if (event->message == WM_RBUTTONUP || event->message == WM_NCRBUTTONUP ||
+            event->message == WM_POINTERUP) g_probeNextMove = TRUE;
+        if (event->message == WM_RBUTTONDOWN || event->message == WM_NCRBUTTONDOWN ||
+            event->message == WM_POINTERDOWN) g_probeNextMove = FALSE;
+        if (record)
+        {
+            BRIDGE_SHARED *shared = BridgeEnsureShared();
+            HWND root = NULL;
+            BridgePostTrace(shared, 14, event->message, (DWORD)event->wParam);
+            if (event->hwnd != NULL) root = GetAncestor(event->hwnd, GA_ROOT);
+            BridgePostTrace(shared, 15, event->message, (DWORD)(ULONG_PTR)root);
+            BridgePostTrace(shared, 16, event->message, GetCurrentThreadId());
+        }
+    }
+    return CallNextHookEx(NULL, code, wParam, lParam);
+}
+#endif
 
 static LRESULT CALLBACK BridgeCallWndProc(int code, WPARAM wParam, LPARAM lParam)
 {
@@ -1280,6 +1326,10 @@ BOOL __cdecl BridgeInstall(HWND owner, DWORD ownerPid)
     }
     BridgeUnlock(shared);
     BridgePostProbe(shared, 54, 1);
+#if defined(BRIDGE_INPUT_PROBE) && defined(_WIN64)
+    g_getMessageProbeHook = SetWindowsHookExW(WH_GETMESSAGE, BridgeGetMessageProbeProc, g_module, 0);
+    BridgePostProbe(shared, 55, g_getMessageProbeHook != NULL ? 1 : 0);
+#endif
     return TRUE;
 }
 
@@ -1315,6 +1365,14 @@ void __cdecl BridgeStop(void)
         UnhookWindowsHookEx(g_callWndHook);
         g_callWndHook = NULL;
     }
+#if defined(BRIDGE_INPUT_PROBE) && defined(_WIN64)
+    if (g_getMessageProbeHook != NULL)
+    {
+        UnhookWindowsHookEx(g_getMessageProbeHook);
+        g_getMessageProbeHook = NULL;
+    }
+    g_probeNextMove = FALSE;
+#endif
 #if defined(BRIDGE_INPUT_PROBE) && defined(_WIN64)
     if (isOwner)
     {

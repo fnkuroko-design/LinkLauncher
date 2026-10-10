@@ -158,11 +158,29 @@ Microsoftの資料には、アプリアイコンの右クリックでジャン�
 - [タスクバーのカスタマイズ](https://support.microsoft.com/en-au/windows/experience/personalization/customize-the-taskbar-in-windows)
 - [WPF ButtonBaseの公式ソース](https://github.com/dotnet/wpf/blob/main/src/Microsoft.DotNet.Wpf/src/PresentationFramework/System/Windows/Controls/Primitives/ButtonBase.cs)
 
+## 非表示後の連続呼び出しとキュー経路の観測（input-l）
+
+input-kの実機確認では、デスクトップ空白の元メニュー抑止、リンク以外のボタンの最初のクリック、静止した通常右クリックは改善した。ただしタスクバーの解放後移動によるメニューは未解決で、HideOnPointerLeave有効時にはデスクトップ/Explorerの連続呼び出しが成功・失敗を交互に繰り返した。
+
+ログの成功seq 45（source root 6751010 / PID 11528 / TID 30112）ではEndMenu成功後の旧window UPが記録されず、次のRIGHTDOWN（339711ms）で旧seqのCOMPLETE、次のLEFTDOWNで候補なしの拒否が発生した。seq 46にも同じパターンがある。BridgeStateOnRightDownはACTIVEかつ同じroot/PIDの場合だけ、旧stateを消して早期returnしていた。新しい右押下が旧stateを消すだけの操作になることが、交互失敗と整合する。
+
+lでは同じ対象の新しいRIGHTDOWNも旧seqをsupersedeした後、新しいCANDIDATEへ進める。物理RIGHTDOWNは引き続き通過し、新しい単独RIGHTUPや移動によるドラッグの通知も通す。古いwindow UPを補う入力注入・カーソル移動・擬似クリックは使わない。ボタンを保持中に本体が隠れる可能性があるため、非表示通知で無条件にACTIVEを消す対処は採用しない。古い完了callbackのフォーカス移動を防ぐkの処理を維持する。
+
+タスクバーの記録はsource root 65988 / TID 13300で受理・左右UP完了となり、読み取り専用のWin32窓情報ではShell_TrayWnd、その子にComposition/InputSite/CoreWindowのclassが存在した。これはWM_POINTER経路や独自メニューが原因と断定する証拠ではない。kのメニュー照合kind 8にはroot/TID不一致の拒否は記録されておらず、単にsource照合を全Explorerへ緩める根拠はない。
+
+試作だけに受動WH_GETMESSAGEを登録する。PM_REMOVEのキュー通知を読むだけでMSGは変更せず、常にCallNextHookExへ渡す。source PID内の別TIDを含め、右/左・非クライアントのDOWN/UP、WM_CONTEXTMENU、WM_POINTERDOWN/UP/CAPTURECHANGED、解放後の最初のMOVE/POINTERUPDATEを10秒以内で限定して記録する。kind 14は元のwParam、15は通知root、16はTID、stage 55は登録結果。既存CALLWNDPROCは従来の同一TIDの範囲で観測する。これは原因の記録であり、メニュー取消範囲の拡大ではない。正式版にはGETMESSAGE観測hook・全診断ソース・ログを含めない。
+
+### 離席中の自動検証と復旧条件
+
+ユーザーは、マウスのクリック機能とカーソル表示が維持される、または事故時に確実に復旧して返せる場合に限り、検証用の入力生成を許可した。元の座標や物理押下状態への復元を要求したものではない。許可は更新されたが、公開Computer Use APIには右保持＋左押下の操作がなく、無断で非公開helperプロトコルを拡張しない。API初期化のみで、マウス/キーボード入力・カーソル移動・画面の活性化は行っていない。今回の対象動作の自動実機合否は確認できず、ビルドと純状態試験後に手動試験の段階でユーザーの指示どおりゴールを一時停止する。
+
 ## 一次資料
 
 - [LowLevelMouseProc](https://learn.microsoft.com/en-us/windows/win32/winmsg/lowlevelmouseproc): 次のフックへの受け渡しと抑止。
 - [MouseProc](https://learn.microsoft.com/en-us/windows/win32/winmsg/mouseproc): GetMessage/PeekMessage段階のマウスメッセージ処理とHC_ACTION。
 - [CallWndProc](https://learn.microsoft.com/en-us/windows/win32/winmsg/callwndproc): ウィンドウ手続きに渡る前の受動観測。メッセージの変更はできない。
+- [GetMsgProc](https://learn.microsoft.com/en-us/windows/win32/winmsg/getmsgproc): キューから取り出したMSGの観測。試作は変更・消費しない。
+- [WM_POINTERUP](https://learn.microsoft.com/en-us/windows/win32/inputmsg/wm-pointerup): pointer通知とmouse通知を同一視せず、部分的な消費で挙動が未定義となる点も踏まえて観測を先行する。
 - [EndMenu](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-endmenu): 呼んだスレッドのactive menuを終了する。
 - [WM_ENTERMENULOOP](https://learn.microsoft.com/en-us/windows/win32/menurc/wm-entermenuloop): popupメニュー開始の通知。
 - [WM_INITMENUPOPUP](https://learn.microsoft.com/en-us/windows/win32/menurc/wm-initmenupopup): メニュー表示前の初期化通知。

@@ -159,7 +159,7 @@ static int CheckRepressAndRedirectedRelease(void)
     CHECK_VALUE("active same-target repress passes", BridgeStateOnRightDown(&state,
         0x600, 106, 206, 1, 1, 4, &superseded), BRIDGE_DECISION_PASS);
     CHECK_VALUE("active request superseded", superseded, 1);
-    CHECK_VALUE("repress clears prior session", state.phase, BRIDGE_PHASE_IDLE);
+    CHECK_VALUE("repress starts next candidate", state.phase, BRIDGE_PHASE_CANDIDATE);
     CHECK_VALUE("new pair up passes", BridgeStateOnUp(&state, BRIDGE_BUTTON_RIGHT, 0,
         5, &completed), BRIDGE_DECISION_PASS);
 
@@ -173,6 +173,45 @@ static int CheckRepressAndRedirectedRelease(void)
     CHECK_VALUE("matching left release completes", BridgeStateOnUp(&state,
         BRIDGE_BUTTON_LEFT, 1, 10, &completed), BRIDGE_DECISION_COMPLETE);
     CHECK_VALUE("redirected session completion", completed, 2);
+    return 1;
+}
+
+static int CheckRepeatedCallsWithUndeliveredWindowUps(void)
+{
+    BRIDGE_STATE state;
+    BRIDGE_I32 completed = 0;
+    BRIDGE_I32 superseded = 0;
+    BRIDGE_I32 index;
+    BridgeStateInit(&state);
+    /* Simulate menu cancellation and pointer-leave dismissal without
+     * window-addressed UPs; every new RIGHTDOWN must remain usable. */
+    for (index = 0; index < 4; ++index)
+    {
+        BRIDGE_U32 tick = (BRIDGE_U32)index * 100UL;
+        CHECK_VALUE("repeat right down passes", BridgeStateOnRightDown(&state,
+            0x600, 106, 206, 10, 10, tick, &superseded), BRIDGE_DECISION_PASS);
+        CHECK_VALUE("repeat retires only previous request", superseded, index);
+        CHECK_VALUE("every repeat has a candidate", state.phase, BRIDGE_PHASE_CANDIDATE);
+        CHECK_VALUE("every repeat starts a gesture", BridgeStateOnLeftDown(&state,
+            0x600, 106, 206, 10, 10, 1, 0, tick + 1), BRIDGE_DECISION_BEGIN);
+        CHECK_VALUE("repeat sequence advances", state.requestSequence, index + 1);
+        CHECK_VALUE("repeat request claimed once", BridgeStateTakeRequest(&state, index + 1), 1);
+        CHECK_VALUE("repeat accepted", BridgeStateAccept(&state, index + 1,
+            tick + 2, &completed), BRIDGE_DECISION_BEGIN);
+    }
+    BridgeStateOnRightDown(&state, 0x600, 106, 206, 10, 10, 500, &superseded);
+    CHECK_VALUE("next lone right release passes", BridgeStateOnUp(&state,
+        BRIDGE_BUTTON_RIGHT, 1, 501, &completed), BRIDGE_DECISION_PASS);
+    CHECK_VALUE("lone right click leaves no pending buttons", state.pendingButtons, 0);
+    BridgeStateOnRightDown(&state, 0x600, 106, 206, 10, 10, 600, &superseded);
+    BridgeStateOnLeftDown(&state, 0x600, 106, 206, 10, 10, 1, 0, 601);
+    BridgeStateTakeRequest(&state, 5);
+    BridgeStateAccept(&state, 5, 602, &completed);
+    BridgeStateOnRightDown(&state, 0x600, 106, 206, 20, 20, 700, &superseded);
+    CHECK_VALUE("next drag move passes", BridgeStateOnMove(&state, 26, 20), BRIDGE_DECISION_PASS);
+    CHECK_VALUE("next drag releases candidate", state.phase, BRIDGE_PHASE_IDLE);
+    CHECK_VALUE("next drag right release passes", BridgeStateOnUp(&state,
+        BRIDGE_BUTTON_RIGHT, 1, 701, &completed), BRIDGE_DECISION_PASS);
     return 1;
 }
 
@@ -260,7 +299,7 @@ static int CheckMenuHideGestureAndRearm(void)
 int main(void)
 {
     int passed = 0;
-    int total = 10;
+    int total = 11;
     passed += CheckNormalChordLeftUpFirst();
     passed += CheckNormalChordRightUpFirst();
     passed += CheckEarlyUpsBeforeAcknowledgement();
@@ -271,6 +310,7 @@ int main(void)
     passed += CheckMenuAfterButtonRelease();
     passed += CheckMenuSourceAndVisibilityBoundary();
     passed += CheckMenuHideGestureAndRearm();
+    passed += CheckRepeatedCallsWithUndeliveredWindowUps();
     printf("Bridge state checks: %d/%d passed\n", passed, total);
     return passed == total ? 0 : 1;
 }

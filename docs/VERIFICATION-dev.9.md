@@ -125,7 +125,7 @@ input-dのChordReleaseChecksは1回実行した。12個のチェックが成功�
 - 詳細確認のためユーザーが再起動を依頼。input-jの残存プロセスなし、5バイナリのSHA-256一致を確認し、同じEXEを記録付きで再起動した。本体PID 20736、status=21、stage 54 detail 1。ソース・設定は変更せず、起動前後のlibrary.json SHA-256は`395de6bb95bf03f90347800b4f26d769acd9e426bf5fae14294a648eb5427c39`で一致。前の起動後の値との一致は主張しない。
 - 再起動記録は`observations/20261011-013940-aabfa3e88027403c9dc6693edf1408d1/`。ユーザーの訂正ではメニューは左押下直後ではなく、両ボタンを離して少し移動した時点で出る。この操作に対応するメニュー通知のroot/TIDは既存ログだけでは未確定。ログの保存コピーと報告JSONは試作アプリの外側に保持した。
 
-### input-kの変更と自動確認（実機確認待ち）
+### input-kの変更と自動確認（部分改善・受入未達）
 
 - 受理済みの元ウィンドウのメニュー取消情報をボタン状態から分け、解放後も本体が表示中で次の通常操作まで保持する。通常DOWN・ホイール・本体キー入力・ホットキー・非表示・停止・標準キーボードメニューで消去する。呼び出しで本体を隠した場合は2秒以内に限定する。source root/PID/TIDの照合とsourceスレッド内EndMenuを維持する。
 - 新しいDOWNがnative activeのLL早期returnより前に古いActivationCompletionを取り消し、次の通常クリック中に検索欄へフォーカスを戻さない。外側クリックの通常処理も新しいDOWNで継続する。
@@ -134,6 +134,15 @@ input-dのChordReleaseChecksは1回実行した。12個のチェックが成功�
 - 次の最少手動確認は、デスクトップとタスクバー各1回の右＋左→解放→少し移動、最初の「リンクを追加」クリック、次の通常右クリック。設定は保存しない。これらが改善してからPDF手書きとCodexの代表操作へ進む。
 - ソース`e8629e5ad607004b4d90fbed0d94234cd9d79c9d`からRelease / win-x64 / framework-dependent publish成功、警告・エラー出力なし。試作は`artifacts/previews/LinkLauncher-v0.1.2-dev.9-input-k-release-menu-probe/`。アプリ内は5バイナリのみ、native x64 DLLは14,848 bytes。19ソースのコピーと5バイナリのSHA-256を外側のsource-snapshot/build-info.jsonへ保存した。旧dev.8 ZIPのSHA-256は引き続き`2ea8c356e1601f1b6269331075461764a708099a2facd4db633f32d87faaeac2`と一致した。
 - input-jを含む常駐プロセスなしとバイナリの一致を確認し、記録付きinput-kを起動した。本体PID 9408、status=21、stage 54 detail 1。補助プロセスなし。記録は`observations/20261011-015023-ba9aa3e6eff049a19b36848590a8bf89/`。起動前後のlibrary.json SHA-256は`e6e8c1bad1d4e2a6e224e8d16bda8a7eede4ac08079fbcd8589727fdb357e759`で一致した。前の試作操作後まで不変だったとは記録しない。設定保存・強制終了・入力生成・カーソル自動移動・Computer Use・正式配布ZIP作成・GitHub公開は行っていない。実機受入は回答待ち。
+
+### input-kの実機結果とinput-lの修正
+
+- ユーザー報告で、デスクトップ空白では元メニューが出ず、リンク以外のボタンも1回で反応した。静止した通常右クリックのメニューも表示された。一方、タスクバーでは解放後の移動で元メニューが出たままで、HideOnPointerLeave有効時にはデスクトップ/Explorerで2回目が失敗、3回目が成功、以後交互となった。タスクバー空白かアイコンかはこの回答では確定していない。全体の受入未達。
+- input-kの記録コピー、報告JSON、読み取り専用のsource窓inventoryを同じobservationsフォルダーへ保持した。現在の設定はHideOnPointerLeave=true / DismissOnDeactivate=true。設定を書き換えていない。タスクバーsource root/TIDへのBEGIN/左右UP完了を確認したが、そこでの標準メニュー開始は観測されていない。class名から内部入力方式を断定しない。
+- 古いACTIVEが残った次の同一root/PIDへの右DOWNで、旧state消去後にreturnする分岐を修正した。その右DOWN自身を新たな候補にする。旧stateのwindow UPを注入せず、右DOWN・通常右UP・右ドラッグの通過を保つ。
+- 純状態試験は11/11成功。前回のwindow UP未達のまま4回連続する呼び出し、その後の単独右クリックと右ドラッグを追加し、既存の解放順序/早期UP/照合/重複/redirect/watchdog/wrap/menu guardを併せて実行した。記録は`artifacts/checks/dev9-repeat-20261011-020731/result.txt`。新しいnativeとWPF、タスクバーの実機合否は別途必要。
+- lの診断は受動GETMESSAGE（source PIDのキューからPM_REMOVEで受けたmouse/pointer/context通知、解放後の最初の移動、root/TID）のみを追加する。MSG変更や入力の生成はしない。診断登録失敗はstage 55で示し、機能のready status=21とは区別する。正式配布へ残さない。
+- ユーザーは離席中の自律調査と、手動操作が必要な時点での一時停止を指示した。入力生成禁止は後に「クリック機能/カーソル表示を維持または確実に復旧する条件で許可」へ変更された。Computer Use skill/APIを読み、公開APIの初期化まで行った。右保持＋左クリックを作る操作APIがなく、非公開helperプロトコルを拡張していない。自動マウス/キー入力、カーソル移動、窓の活性化、スクリーンショットは行っていない。input-kの常駐を維持し、lを別の新しい試作フォルダーへビルドして手動確認待ちで一時停止する。
 
 ## 試作の比較と復元
 

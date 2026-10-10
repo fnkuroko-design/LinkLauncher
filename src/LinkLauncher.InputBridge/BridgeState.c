@@ -100,16 +100,9 @@ BRIDGE_I32 BridgeStateOnRightDown(
     }
     if (state->phase == BRIDGE_PHASE_ACTIVE)
     {
-        if (state->targetRoot == root && (BRIDGE_U32)state->targetPid == pid)
-        {
-            /* Keep a fresh same-target click balanced by passing its whole pair. */
-            if (state->requestValid && state->pendingButtons != 0 && supersededSequence != 0)
-            {
-                *supersededSequence = state->requestSequence;
-            }
-            BridgeClearSession(state);
-            return BRIDGE_DECISION_PASS;
-        }
+        /* A fresh physical right DOWN begins a new press even when the old
+         * window-addressed UPs were lost after menu cancellation or hiding.
+         * Its DOWN still passes; its lone UP or drag also passes normally. */
         if (state->requestValid && state->pendingButtons != 0 && supersededSequence != 0)
         {
             *supersededSequence = state->requestSequence;
