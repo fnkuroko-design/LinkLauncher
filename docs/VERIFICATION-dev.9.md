@@ -228,6 +228,13 @@ input-dのChordReleaseChecksは1回実行した。12個のチェックが成功�
 
 - 診断除去後のRelease / win-x64ビルドは警告0・エラー0で成功。MSVCのx64/x86対象も/W4 /WXで成功した。入力状態13/13とActivationCompletionChecks 4/4が成功。今回変更していないカテゴリ/リンク/テーマ等の自動チェックは繰り返していない。記録は`artifacts/checks/dev9-distribution-20261011-033611/`のstate-result.txt/activation-result.txt。実機確認済みinput-pの機能を維持し、配布候補の起動確認は次に行う。
 
+### 診断を含まないdev.9配布候補
+
+- ソース`2760879dcc27ee8ca4791cd7cf908d660d97f934`からPublish.ps1でZIPを作成した。FileVersion 0.1.2.9 / ProductVersion 0.1.2-dev.9+同コミット。既存dev.9成果物はなく、旧成果物を上書きしていない。ZIPは`artifacts/releases/LinkLauncher-v0.1.2-dev.9-win-x64.zip`、188,690 bytes、SHA-256 `3d67414e8ec6d1d5f1e590e03fb257d1ef5112f9d57c37c43c814b14ebf3972e`。
+- ZIPのCRC、10ファイルの期待リスト、ルートLinkLauncher/、展開前後と配布フォルダーの全ハッシュ一致、SHA-256 sidecar、.NET 10 Core/Desktop framework-dependent設定を確認した。展開後404,852 bytes。ランタイム、ユーザーデータ、PDB、調査ツール、ログを含めない。nativeはx64でimportsはUSER32.dll/KERNEL32.dllのみ。.LLPRB/.LLTRCセクションとC#の診断ロガー/ログ文字列がなく、sourceにもInputProbe/WH_GETMESSAGE診断がない。確認記録は同じchecks内package-result.json。
+- userのinput-p終了連絡後、残存なしと全10ファイルのハッシュ一致を確認して配布EXEを起動した。本体PID 26860が単独常駐。診断環境変数を渡さず、共有状態を読み取り専用で照会しenabled=1/status=53/version=3/size=136/ownerPID一致を確認した。記録は`artifacts/checks/dev9-distribution-20261011-033611/startup-20261011-033832-e057b0ee48ba49069611b7c8baa13754/`。起動前後のlibrary.jsonハッシュは一致した。アプリ操作中も不変だったとは扱わない。
+- 設定/スタートアップ先の変更、強制停止、マウス入力生成、カーソル移動、Computer Use、GitHub公開は行っていない。実機の機能確認はinput-pの少数手動操作で合格、診断除去後の最終起動/フック登録は確認済み。配布候補の最少手動確認を待ち、完成扱いはその後とする。
+
 ## 試作の比較と復元
 
 2版の同時起動は単一起動制御でできない。旧dev.8をトレイから終了し、dev.9の試作用EXEを起動する。比較中は設定の保存を行わず、スタートアップ登録先を変更しない。元へ戻す場合はdev.9をトレイから終了し、保持した `artifacts/releases/LinkLauncher-v0.1.2-dev.8-win-x64/LinkLauncher/LinkLauncher.exe` を起動する。
