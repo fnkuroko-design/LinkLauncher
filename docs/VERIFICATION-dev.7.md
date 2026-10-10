@@ -27,3 +27,15 @@
 - MouseChecks: 7/7 PASS。既存のボタン組み合わせ、通常クリック・ドラッグ復元、設定変更時のキャンセルを確認した。
 - 初回ビルドで、カーソル取得APIを変更した際の残ったGetCursorPos呼び出し1箇所が検出された。GetPhysicalCursorPosへ統一し、上記のテストビルド・実行が成功した。
 - Computer Useは行っていない。WPF画面の見た目と実マウス操作による受入は、上記のnative座標判定とは別の確認範囲として残す。
+
+## 配布物
+
+- 配布ソース: `c8701c79db48f0254bb9e2d4e33005f45d283eef`。Release / win-x64 / framework-dependent publishが警告・エラーなしで成功した。
+- ZIP: `artifacts/releases/LinkLauncher-v0.1.2-dev.7-win-x64.zip`、171,602 bytes。展開後のファイル合計は370,987 bytes。
+- SHA-256: `70ebcd6a85c886093dce7801937ed9a7ffad362e7c1d3e6ee9103262e5bf2899`。SHA-256ファイルと再計算値が一致する。
+- FileVersionは `0.1.2.7`、ProductVersionは `0.1.2-dev.7+c8701c79db48f0254bb9e2d4e33005f45d283eef`。
+- 新しい検証用ディレクトリへZIPを展開し、直下が `LinkLauncher/` フォルダ1つだけで、期待する9ファイルがすべてその配下にあり、全ファイルのハッシュが配布フォルダと一致することを確認した。ランタイム本体・ユーザーデータ・PDBを含まない。
+- 配布EXEを起動せず、PEのmanifestリソースを読み取った。`dpiAwareness=PerMonitorV2, PerMonitor` と `dpiAware=true/pm` が実行ファイル内に埋め込まれていることを確認した。
+- runtimeconfigは.NETCoreとWindowsDesktopの10.0.0共有フレームワークを参照する。
+- 完成済みdev.1〜dev.6と正式版v0.1.0/v0.1.1の旧ZIP8件は記録済みのSHA-256と一致する。
+- ローカル開発版として保存し、実行中の `C:\APP\LinkLauncher\LinkLauncher.exe` のファイル・スタートアップ登録先・データは変更していない。新版の起動確認時は旧版を終了してから、このZIPを新しい場所へ展開して起動する。
