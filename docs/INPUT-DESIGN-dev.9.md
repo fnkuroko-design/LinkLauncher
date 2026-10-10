@@ -123,6 +123,12 @@ gのユーザー確認では2回とも表示され左クリックも使えたが
 
 `BRIDGE_INPUT_PROBE`限定のWH_CALLWNDPROCはメッセージを変更せずCallNextHookExへ渡し、対象PID/TIDに3秒の観測窓を設ける。通常WH_MOUSEのHC_NOREMOVEも引き続きそのまま通す。記録のGetTickCountとcapture解除前後を比較し、WndProc通知が観測できなければ原因を確定したと扱わない。汎用的なWM_CANCELMODEの標準動作はメニュー処理取消とcapture解除だが、アプリ独自の処理を元に戻す保証ではない。正式版にはこの観測機構を残さない。
 
+## 操作の取消通知（input-i）
+
+hの1回のデスクトップ再現では、左押下受理・capture解除・WM_CAPTURECHANGEDと同じtickの47ms後にWM_CONTEXTMENU、さらにメニュー開始を観測した。左右UPはその後に来て消費され、Windowsの非同期状態は両方0だった。従ってこのメニューはUPだけの抑止で防げず、単なるcapture解除で元アプリが右クリックを完了扱いにした可能性が高い。これは元アプリの内部コードを直接観測した確定原因とは区別する。
+
+iの変更対象は`BridgeHook.c`のsource-context処理。捕捉ウィンドウのPID/TID/rootを照合してWM_CANCELMODEを送り、GetCaptureがNULLへ変わることを確認する。直接のReleaseCaptureは使わず、installer側と同じ標準取消プロトコルへ揃える。入力の再送・移動・全窓への取消・アプリ別例外は使わない。通知失敗・残存captureでは状態をrejectし、入力を通す。WM_CANCELMODEを処理しない独自UIや捕捉なしの独自右DOWN状態は取消を保証しない。実機受入はまだ未確認で、まずデスクトップの最小確認を行う。
+
 ## 一次資料
 
 - [LowLevelMouseProc](https://learn.microsoft.com/en-us/windows/win32/winmsg/lowlevelmouseproc): 次のフックへの受け渡しと抑止。

@@ -84,13 +84,23 @@ input-dのChordReleaseChecksは1回実行した。12個のチェックが成功�
 - 起動前と起動直後はユーザーデータのハッシュが一致したが、操作後の`library.json`は`d440e36535843cb36a769c1af9040650df675f4d94c6c822f148a7df47e8ff38`となり、同一ではない。ツールによるデータの置換・設定保存は行っていない。アプリの通常利用中の更新と区別し、操作後も変わっていないとは記録しない。
 - ユーザーが検証アプリを終了したうえで、LinkLauncherなしのデスクトップで右保持→左クリックを試し、左押下で右クリック完了・メニュー表示になる通常挙動を確認した。rootは本体・補助プロセスが残っていないことを確認した。これはユーザーの比較観測であり、物理キー状態や生成されたWindowsメッセージの種類をrootが直接確認した証拠ではない。
 
-### input-hの最小限の順序観測（準備中）
+### input-hの最小限の順序観測（実機観測済み）
 
 - 元メニューが左押下で出るため、右UP抑止だけで解決すると扱わない。gのsource側ReleaseCaptureをWM_CANCELMODEに変える案は、この時点では実装していない。通知順序を確定してから変更を判断する。
 - 編集対象は`BridgeHook.c`の`BRIDGE_INPUT_PROBE`限定の観測、`DesktopIntegration.cs`のログ表示、開発記録。gの物理入力通過・候補・ACK・解放処理は変更しない。
 - 試作だけにWH_CALLWNDPROCを追加し、全ての通知を次のフックへ渡す。直近の右DOWNの対象PID/TIDかつ3秒以内のR/L通知、WM_CONTEXTMENU、WM_CANCELMODE、WM_CAPTURECHANGED、メニュー開始・終了・初期化だけを非同期記録する。対象のウィンドウ手続きを変更・subclass化しない。捕捉解除の前後、HC_NOREMOVEでの押下照会、HC_ACTIONの押下受理・UP処理結果を同じGetTickCount時刻とともに記録する。
 - stage 54は受動観測フックの登録結果。追加の`0x803B`通知のkind 1はWndProc直前、2はHC_NOREMOVE、3は押下候補、4/5は既存のcapture解除前後、6はUP処理。kind 6のdetailの下位8bitはdecision（0通過、2消費、3完了）、bit 8はtarget一致、bit 9はsource-context。ログの受信時刻だけで送信元の順序を判断せず、記録したtickを併用する。
 - 受入は観測の到達と順序の判別。これは修正版の実機合格ではない。全ての診断ソース・フック・ログを正式配布物から除去する。
+- ソース`376bdfb9708f94da753b22405ebe1514a3bf209c`からpublish成功、警告・エラー出力なし。5バイナリと19ソースのコピー・ハッシュを試作外側に保持した。`.LLPRB`は132 bytes、`.LLTRC`は12 bytesで、両方SharedReadWrite。状態遷移を変えていないため純状態試験は再実行していない。
+- 残存プロセスなしを確認後、rootが記録付きでinput-hを起動した。本体PID 8952、status=5、受動観測hookのstage 54 detail 1を確認した。起動前後のユーザーデータハッシュはgの操作後の値と一致した。記録先は`artifacts/previews/LinkLauncher-v0.1.2-dev.9-input-h-menu-order-probe/observations/20261011-011835-e7b17b1e2ad448549d9cbe1193524028/`。
+- ユーザーにデスクトップ空白で1回だけ手動右＋左を依頼し、ランチャーと元メニューの両方が出た。`input-at-user-result.log`ではsource PID 11528の左押下受理とcapture解除前後がtick 35567984。WM_CAPTURECHANGEDも同tick、WM_CONTEXTMENUが35568031（47ms後）、WM_ENTERMENULOOP/WM_INITMENUPOPUPが35568062だった。その後の左UPが35568281、右UPが35568343。両UPは対象一致の消費/完了となり、完了直後と後続確認の非同期左右状態は0だった。
+- この再現では元メニューは物理UPより先に生成された。捕捉解除後の右クリック完了扱いが原因である可能性が高いが、元アプリ内部の呼出しスタックまでは観測していない。WndProc直前のWM_CONTEXTMENUを取れたため、表示失敗やUPの単純な通過と区別できた。追加の実入力生成、カーソル移動、Computer Useは行っていない。
+
+### input-iの操作取消し（実装済み・実機確認待ち）
+
+- 変更対象は`BridgeHook.c`のsource-contextでのcapture処理。照合した捕捉ウィンドウへのWM_CANCELMODEで操作自体の取消しを伝え、GetCaptureがNULLになったことを確認する。ReleaseCaptureだけの直接呼出しは廃止する。installer側の既存WM_CANCELMODE処理、物理入力通過、候補・ACK・UP処理は変更しない。
+- 捕捉なしの場合は従来どおり通り、PID/TID/root不一致、取消通知の失敗、残存capture、時間切れは候補を拒否してLEFTDOWNを通す。対象外のウィンドウ、全プロセス、メニュー全般への取消通知は送らない。same-threadの同期処理に厳密な75ms上限を保証せず、アプリ独自状態の普遍的な取消しも保証しない。
+- まずデスクトップの1回の呼び出しで元メニューの抑止を確認する。成功後に繰返し・解放後左クリックと、Codex通常メニュー/PDF手書き右DOWN・右ドラッグの少数確認に進む。診断は引き続き正式配布へ含めない。
 
 ## 試作の比較と復元
 

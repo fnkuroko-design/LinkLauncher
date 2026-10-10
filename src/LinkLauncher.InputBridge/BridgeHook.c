@@ -497,6 +497,8 @@ static BOOL BridgeReleaseSourceCapture(
 
     if (sourceContext)
     {
+        DWORD remaining;
+        DWORD_PTR cancelResult = 0;
         if (currentTid != sourceTid)
         {
             if (failureDetail != NULL) *failureDetail = BRIDGE_PROBE_CAPTURE_FAILURE_SOURCE_THREAD;
@@ -510,9 +512,23 @@ static BOOL BridgeReleaseSourceCapture(
             if (failureDetail != NULL) *failureDetail = BRIDGE_PROBE_CAPTURE_FAILURE_SOURCE_WINDOW;
             return FALSE;
         }
-        if (BridgeRemainingGestureBudget(startTick) == 0 || !ReleaseCapture() || GetCapture() != NULL)
+        remaining = BridgeRemainingGestureBudget(startTick);
+        if (remaining == 0)
         {
-            if (failureDetail != NULL) *failureDetail = BRIDGE_PROBE_CAPTURE_FAILURE_RELEASE;
+            if (failureDetail != NULL) *failureDetail = BRIDGE_PROBE_CAPTURE_FAILURE_BUDGET;
+            return FALSE;
+        }
+        /* ReleaseCapture alone can complete a pending right-click gesture.
+           Ask its owning window to cancel the operation before accepting it. */
+        if (SendMessageTimeoutW(capture, WM_CANCELMODE, 0, 0,
+                SMTO_ABORTIFHUNG, remaining, &cancelResult) == 0)
+        {
+            if (failureDetail != NULL) *failureDetail = BRIDGE_PROBE_CAPTURE_FAILURE_CANCEL;
+            return FALSE;
+        }
+        if (GetCapture() != NULL)
+        {
+            if (failureDetail != NULL) *failureDetail = BRIDGE_PROBE_CAPTURE_FAILURE_REMAINS;
             return FALSE;
         }
         return TRUE;
