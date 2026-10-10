@@ -129,11 +129,22 @@ hの1回のデスクトップ再現では、左押下受理・capture解除・WM
 
 iの変更対象は`BridgeHook.c`のsource-context処理。捕捉ウィンドウのPID/TID/rootを照合してWM_CANCELMODEを送り、GetCaptureがNULLへ変わることを確認する。直接のReleaseCaptureは使わず、installer側と同じ標準取消プロトコルへ揃える。入力の再送・移動・全窓への取消・アプリ別例外は使わない。通知失敗・残存captureでは状態をrejectし、入力を通す。WM_CANCELMODEを処理しない独自UIや捕捉なしの独自右DOWN状態は取消を保証しない。実機受入はまだ未確認で、まずデスクトップの最小確認を行う。
 
+## 呼び出し元の標準メニュー終了（input-j）
+
+iの最小確認でもランチャーと元メニューの両方が出た。WM_CANCELMODEとWM_CAPTURECHANGEDの到達後、31msで新たなWM_CONTEXTMENU、次にメニュー開始が起きた。取消は受理済みでも、元の右DOWNから始まった処理が後からメニューを生成した。右UPはそれより後に消費され、ボタン状態は解放された。
+
+jでは操作取消しに加え、WH_CALLWNDPROCで受理済みの呼び出し元の標準popupメニュー開始を認識し、source自身のスレッドでEndMenuを呼ぶ。ACTIVE/受理済み/未解放、PID/TID/root一致、callback実行PID/TID一致、開始から2秒未満で限定する。単独右クリックや別窓には適用しない。フックチェーンの通知は変更せず次へ渡す。登録できない場合は入力仲介を有効にしない。共有構造体のlayoutは維持し、statusにmenu-hook bit 16を追加、C#はmask 21を確認する。
+
+EndMenuは呼んだスレッドのactive menuを終了するAPIであり、元アプリの処理を全般的に巻き戻す機能ではない。独自描画メニュー・保護されたアプリ・installer側にしか通知が来ない場合には同じ保証をしない。正式版では順序観測・カウンター・ログを除去し、必要な標準メニュー終了の処理を残す。
+
 ## 一次資料
 
 - [LowLevelMouseProc](https://learn.microsoft.com/en-us/windows/win32/winmsg/lowlevelmouseproc): 次のフックへの受け渡しと抑止。
 - [MouseProc](https://learn.microsoft.com/en-us/windows/win32/winmsg/mouseproc): GetMessage/PeekMessage段階のマウスメッセージ処理とHC_ACTION。
 - [CallWndProc](https://learn.microsoft.com/en-us/windows/win32/winmsg/callwndproc): ウィンドウ手続きに渡る前の受動観測。メッセージの変更はできない。
+- [EndMenu](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-endmenu): 呼んだスレッドのactive menuを終了する。
+- [WM_ENTERMENULOOP](https://learn.microsoft.com/en-us/windows/win32/menurc/wm-entermenuloop): popupメニュー開始の通知。
+- [WM_INITMENUPOPUP](https://learn.microsoft.com/en-us/windows/win32/menurc/wm-initmenupopup): メニュー表示前の初期化通知。
 - [SetWindowsHookExW](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwindowshookexw): 他プロセスのフックと32bit・64bitの制約。
 - [入力再送の順序](https://devblogs.microsoft.com/oldnewthing/20121206-00/?p=5903): 物理UPと後挿入DOWNの順序が押しっぱなしを生む例。
 - [GetAsyncKeyState](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getasynckeystate): ボタン状態と照会失敗。対象アプリの押下フラグとは区別する。

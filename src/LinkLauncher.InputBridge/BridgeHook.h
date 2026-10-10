@@ -14,6 +14,7 @@
 #define BRIDGE_STATUS_HOOK32 0x00000002UL
 #define BRIDGE_STATUS_ENABLED 0x00000004UL
 #define BRIDGE_STATUS_FOREGROUND_PROMOTED 0x00000008UL
+#define BRIDGE_STATUS_MENU_HOOK 0x00000010UL
 
 /* 固定幅と明示的なpaddingで両bitnessを揃え、stateの8-byte alignmentも維持する。 */
 #pragma pack(push, 8)

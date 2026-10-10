@@ -6,7 +6,7 @@ using System.Runtime.InteropServices;
 namespace LinkLauncher.Services;
 
 /// <summary>
-/// 物理入力を遮断せず、WH_MOUSEによるウィンドウ宛ての呼び出し入力の仲介を管理します。
+/// 物理入力を遮断せず、呼び出し入力の仲介と元の標準メニューの終了を管理します。
 /// 入力の生成やカーソル移動は行いません。
 /// </summary>
 internal sealed class NativeMouseChord : IDisposable
@@ -14,7 +14,7 @@ internal sealed class NativeMouseChord : IDisposable
     internal const int NotificationMessage = 0x8039;
     internal const int BeginNotification = 1;
     internal const int CompleteNotification = 2;
-    private const uint ReadyStatus = 5; // 64bit hook + enabled。異なるbitnessはinstaller側callbackで扱う。
+    private const uint ReadyStatus = 21; // 64bit mouse hook + menu hook + enabled。
 
     // Unhook直後も既存callbackが終了処理中である可能性があるため、DLLはプロセスの寿命まで保持します。
     private static Bindings? _bindings;

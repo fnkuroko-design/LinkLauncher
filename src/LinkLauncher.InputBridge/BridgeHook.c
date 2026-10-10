@@ -123,9 +123,7 @@ static LONG BridgeReadOtherButtons(void)
 
 static HINSTANCE g_module = NULL;
 static HHOOK g_mouseHook = NULL;
-#if defined(BRIDGE_INPUT_PROBE) && defined(_WIN64)
-static HHOOK g_callWndProbeHook = NULL;
-#endif
+static HHOOK g_callWndHook = NULL;
 static HANDLE g_mapping = NULL;
 static BRIDGE_SHARED *g_shared = NULL;
 static volatile LONG g_mapInitState = 0;
@@ -355,29 +353,6 @@ static void BridgePostTrace(BRIDGE_SHARED *shared, UINT kind, UINT message, DWOR
 #endif
 }
 
-#if defined(_WIN64)
-static LRESULT CALLBACK BridgeCallWndProbe(int code, WPARAM wParam, LPARAM lParam)
-{
-    if (code == HC_ACTION && lParam != 0)
-    {
-        const CWPSTRUCT *event = (const CWPSTRUCT *)lParam;
-        switch (event->message)
-        {
-        case WM_RBUTTONDOWN: case WM_RBUTTONUP:
-        case WM_LBUTTONDOWN: case WM_LBUTTONUP:
-        case WM_CONTEXTMENU: case WM_CANCELMODE: case WM_CAPTURECHANGED:
-        case WM_ENTERMENULOOP: case WM_EXITMENULOOP: case WM_INITMENUPOPUP:
-            if (BridgeTraceIsCurrent(GetCurrentProcessId(), GetCurrentThreadId()))
-                BridgePostTrace(BridgeEnsureShared(), 1, event->message, GetCurrentProcessId());
-            break;
-        default:
-            break;
-        }
-    }
-    /* Never alter a notification or its result, including negative hook codes. */
-    return CallNextHookEx(NULL, code, wParam, lParam);
-}
-#endif
 #else
 #define BridgePostProbe(shared, stage, detail) ((void)0)
 #define BridgeStartTrace(pid, tid) ((void)0)
@@ -398,6 +373,62 @@ static BOOL BridgeIsRootTarget(HWND window, HWND *root, DWORD *pid, DWORD *tid)
     if (pid != NULL) *pid = targetPid;
     if (tid != NULL) *tid = targetTid;
     return TRUE;
+}
+
+static LRESULT CALLBACK BridgeCallWndProc(int code, WPARAM wParam, LPARAM lParam)
+{
+    if (code == HC_ACTION && lParam != 0)
+    {
+        const CWPSTRUCT *event = (const CWPSTRUCT *)lParam;
+        BRIDGE_SHARED *shared;
+#if defined(BRIDGE_INPUT_PROBE) && defined(_WIN64)
+        switch (event->message)
+        {
+        case WM_RBUTTONDOWN: case WM_RBUTTONUP:
+        case WM_LBUTTONDOWN: case WM_LBUTTONUP:
+        case WM_CONTEXTMENU: case WM_CANCELMODE: case WM_CAPTURECHANGED:
+        case WM_ENTERMENULOOP: case WM_EXITMENULOOP: case WM_INITMENUPOPUP:
+            if (BridgeTraceIsCurrent(GetCurrentProcessId(), GetCurrentThreadId()))
+                BridgePostTrace(BridgeEnsureShared(), 1, event->message, GetCurrentProcessId());
+            break;
+        default:
+            break;
+        }
+#endif
+        if ((event->message == WM_ENTERMENULOOP && event->wParam != 0) ||
+            event->message == WM_INITMENUPOPUP)
+        {
+            HWND root = NULL;
+            DWORD pid = 0;
+            DWORD tid = 0;
+            BOOL cancelMenu = FALSE;
+            shared = BridgeEnsureShared();
+            if (shared != NULL &&
+                InterlockedCompareExchange(&shared->enabled, 0, 0) != 0 &&
+                BridgeIsRootTarget(event->hwnd, &root, &pid, &tid) &&
+                pid != (DWORD)shared->ownerPid &&
+                pid == GetCurrentProcessId() && tid == GetCurrentThreadId() &&
+                BridgeTryLock(shared))
+            {
+                cancelMenu = shared->state.phase == BRIDGE_PHASE_ACTIVE &&
+                    shared->state.requestValid && shared->state.requestClaimed &&
+                    shared->state.pendingButtons != 0 &&
+                    shared->state.targetRoot == (BRIDGE_U64)(ULONG_PTR)root &&
+                    (DWORD)shared->state.targetPid == pid &&
+                    (DWORD)shared->state.targetTid == tid &&
+                    (DWORD)(GetTickCount() - shared->state.startTick) < BRIDGE_WATCHDOG_MS;
+                BridgeUnlock(shared);
+            }
+            if (cancelMenu)
+            {
+                BOOL ended = EndMenu();
+                BridgePostTrace(shared, 7, event->message, ended ? 1UL : 0UL);
+            }
+        }
+    }
+    /* Preserve message delivery and hook-chain results. EndMenu is scoped
+       separately to the accepted gesture's original thread and window. */
+    return CallNextHookEx(NULL, code, wParam, lParam);
 }
 
 static BOOL BridgeIsRightDown(UINT message)
@@ -1169,8 +1200,28 @@ BOOL __cdecl BridgeInstall(HWND owner, DWORD ownerPid)
         return FALSE;
     }
 
+    g_callWndHook = SetWindowsHookExW(WH_CALLWNDPROC, BridgeCallWndProc, g_module, 0);
+    if (g_callWndHook == NULL)
+    {
+        DWORD hookError = GetLastError();
+        UnhookWindowsHookEx(g_mouseHook);
+        g_mouseHook = NULL;
+        if ((DWORD)currentPid == ownerPid)
+        {
+            InterlockedExchange(&shared->enabled, 0);
+            shared->statusBits = 0;
+        }
+        BridgeCloseLocalMapping();
+        g_cfgOwnerPid = 0;
+        g_cfgOwnerHwnd = 0;
+        SetLastError(hookError);
+        return FALSE;
+    }
+
     if (!BridgeTryLock(shared))
     {
+        UnhookWindowsHookEx(g_callWndHook);
+        g_callWndHook = NULL;
         UnhookWindowsHookEx(g_mouseHook);
         g_mouseHook = NULL;
         BridgeCloseLocalMapping();
@@ -1179,6 +1230,7 @@ BOOL __cdecl BridgeInstall(HWND owner, DWORD ownerPid)
     if ((DWORD)currentPid == ownerPid)
     {
         shared->statusBits |= (LONG)BRIDGE_STATUS_HOOK64;
+        shared->statusBits |= (LONG)BRIDGE_STATUS_MENU_HOOK;
         shared->statusBits |= (LONG)BRIDGE_STATUS_ENABLED;
         InterlockedExchange(&shared->enabled, 1);
     }
@@ -1187,10 +1239,7 @@ BOOL __cdecl BridgeInstall(HWND owner, DWORD ownerPid)
         shared->statusBits |= (LONG)BRIDGE_STATUS_HOOK32;
     }
     BridgeUnlock(shared);
-#if defined(BRIDGE_INPUT_PROBE) && defined(_WIN64)
-    g_callWndProbeHook = SetWindowsHookExW(WH_CALLWNDPROC, BridgeCallWndProbe, g_module, 0);
-    BridgePostProbe(shared, 54, g_callWndProbeHook != NULL ? 1 : -(LPARAM)GetLastError());
-#endif
+    BridgePostProbe(shared, 54, 1);
     return TRUE;
 }
 
@@ -1205,6 +1254,7 @@ void __cdecl BridgeStop(void)
         if (BridgeTryLock(shared))
         {
             shared->statusBits &= ~((LONG)BRIDGE_STATUS_HOOK64 |
+                (LONG)BRIDGE_STATUS_MENU_HOOK |
                 (LONG)BRIDGE_STATUS_ENABLED | (LONG)BRIDGE_STATUS_FOREGROUND_PROMOTED);
             BridgeStateCancel(&shared->state);
             shared->otherButtons = 0;
@@ -1219,12 +1269,12 @@ void __cdecl BridgeStop(void)
         UnhookWindowsHookEx(g_mouseHook);
         g_mouseHook = NULL;
     }
-#if defined(BRIDGE_INPUT_PROBE) && defined(_WIN64)
-    if (g_callWndProbeHook != NULL)
+    if (g_callWndHook != NULL)
     {
-        UnhookWindowsHookEx(g_callWndProbeHook);
-        g_callWndProbeHook = NULL;
+        UnhookWindowsHookEx(g_callWndHook);
+        g_callWndHook = NULL;
     }
+#if defined(BRIDGE_INPUT_PROBE) && defined(_WIN64)
     if (isOwner)
     {
         InterlockedExchange(&g_tracePid, 0);
