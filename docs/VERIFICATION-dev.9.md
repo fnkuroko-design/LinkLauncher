@@ -132,6 +132,8 @@ input-dのChordReleaseChecksは1回実行した。12個のチェックが成功�
 - 純状態試験は既存7ケースに、UP完了後の遅延メニュー、取消情報消去後の通常メニュー、別root/PID/TID、非表示・再表示、非表示呼び出しの期限/時刻wrap/再受理を含む3ケースを追加し10/10成功。記録は`artifacts/checks/dev9-menu-guard-20261011-014713/result.txt`。Win32フックの配送、EndMenuの実効性、WPFの最初のクリック、タスクバーの実機改善をこの成功で置き換えない。
 - Microsoftの公式資料を確認したが、今回の複合操作から移動後にメニューが出る順序は明文化された仕様として確認できなかった。通常の右クリック/ジャンプリストの仕様と分けて`INPUT-DESIGN-dev.9.md`へ出典を記載した。
 - 次の最少手動確認は、デスクトップとタスクバー各1回の右＋左→解放→少し移動、最初の「リンクを追加」クリック、次の通常右クリック。設定は保存しない。これらが改善してからPDF手書きとCodexの代表操作へ進む。
+- ソース`e8629e5ad607004b4d90fbed0d94234cd9d79c9d`からRelease / win-x64 / framework-dependent publish成功、警告・エラー出力なし。試作は`artifacts/previews/LinkLauncher-v0.1.2-dev.9-input-k-release-menu-probe/`。アプリ内は5バイナリのみ、native x64 DLLは14,848 bytes。19ソースのコピーと5バイナリのSHA-256を外側のsource-snapshot/build-info.jsonへ保存した。旧dev.8 ZIPのSHA-256は引き続き`2ea8c356e1601f1b6269331075461764a708099a2facd4db633f32d87faaeac2`と一致した。
+- input-jを含む常駐プロセスなしとバイナリの一致を確認し、記録付きinput-kを起動した。本体PID 9408、status=21、stage 54 detail 1。補助プロセスなし。記録は`observations/20261011-015023-ba9aa3e6eff049a19b36848590a8bf89/`。起動前後のlibrary.json SHA-256は`e6e8c1bad1d4e2a6e224e8d16bda8a7eede4ac08079fbcd8589727fdb357e759`で一致した。前の試作操作後まで不変だったとは記録しない。設定保存・強制終了・入力生成・カーソル自動移動・Computer Use・正式配布ZIP作成・GitHub公開は行っていない。実機受入は回答待ち。
 
 ## 試作の比較と復元
 
