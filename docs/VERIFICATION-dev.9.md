@@ -151,6 +151,14 @@ input-dのChordReleaseChecksは1回実行した。12個のチェックが成功�
 - ユーザーのinput-k終了連絡後、LinkLauncherの残存なしとinput-lの5バイナリのSHA-256一致を確認し、記録付きで起動した。本体PID 34204、実行パスはinput-lの試作フォルダー、常駐は1個。status=21、stage 54 detail 1、受動GETMESSAGEのstage 55 detail 1を確認した。実機の改善結果はまだ未確認。
 - 記録先は`artifacts/previews/LinkLauncher-v0.1.2-dev.9-input-l-repeat-queue-probe/observations/20261011-021316-4e3995949d094b63b9b54447c0a25d11/`。起動前後のlibrary.json SHA-256は`c660706fa28a1e9796882f9eeebf6c18ff5b5575d82206330d83df0fe27fd859`で一致した。設定保存・スタートアップ変更・入力生成・カーソル操作・強制終了は行っていない。
 
+### input-lの実機報告とメニュー所有者の受動観測
+
+- ユーザーの手動確認では、HideOnPointerLeave有効のデスクトップ連続呼び出し3回すべてで本体が表示され、元メニューは出なかった。静止した通常右クリックのメニューも出た。タスクバーの空白とスタートボタンは本体と元メニューが出て、アプリアイコンでは元メニューは出なかった。PDF手書き/Codex・右ドラッグ・全アプリでの改善は未確認であり、受入完了とは扱わない。
+- input-at-user-result.logとして既存ログのコピーを観測フォルダーに保持した。タスクバーroot 65988 / TID 13300でのBEGIN/ACKと左右UP完了、asyncR/L=0は記録されているが、問題の元メニュー開始通知とキュー入力のtraceは観測されていない。通知がないことからメニュー不存在や具体的な内部入力方式を断定しない。
+- メニュー所有者を特定するため、配布アプリ外側にObserve-MenuEvents.ps1を追加した。WINEVENT_OUTOFCONTEXTでmenu start/end/popup start/endとwindow object showのメタデータ（class/HWND/root/owner/PID/TID/capture/menuOwner）を読むだけで、タイトル・本文の収集、入力の生成/遮断、カーソル操作、メニュー取消、窓の活性化はしない。showイベントは最大500件、観測は180秒でUnhookして自動終了する。本体ソースと設定は変更せず、input-lを維持する。
+- 観測補助プロセスPID 34496、READY tick 39351015を確認した。タスクバー空白とスタート各1回だけの手動操作を依頼した。記録先は起動時の観測フォルダーのmenu-events-*.log。自動試験・正式配布物ではない。
+- 公式資料 https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwindowshookexw はアプリ種別によるglobal hook実行場所/通知の制限を説明するが、本環境のtaskbarへの適用はまだ推定。https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwineventhook に従い、out-of-context observerのcallbackをGCHandleで保持しmessage loopと解除を行う。
+
 ## 試作の比較と復元
 
 2版の同時起動は単一起動制御でできない。旧dev.8をトレイから終了し、dev.9の試作用EXEを起動する。比較中は設定の保存を行わず、スタートアップ登録先を変更しない。元へ戻す場合はdev.9をトレイから終了し、保持した `artifacts/releases/LinkLauncher-v0.1.2-dev.8-win-x64/LinkLauncher/LinkLauncher.exe` を起動する。
