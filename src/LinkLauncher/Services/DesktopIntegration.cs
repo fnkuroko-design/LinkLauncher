@@ -101,6 +101,7 @@ public sealed class DesktopIntegration : IDisposable
     private MouseActivationPattern _mousePattern;
     private readonly MouseActivationState _mouseActivationState = new();
     private MousePressTarget _rightPressTarget;
+    private ChordReleaseReceiver? _chordReleaseReceiver;
     private readonly DesktopDoubleClickState _desktopDoubleClickState = new();
     private POINT _desktopFirstPoint;
     private IntPtr _desktopFirstWindow;
@@ -226,6 +227,9 @@ public sealed class DesktopIntegration : IDisposable
             RaiseWarning("ウィンドウのメッセージフックを設定できませんでした。");
             return false;
         }
+
+        if (mousePattern == MouseActivationPattern.RightThenLeft && !EnsureChordReleaseReceiver())
+            return false;
 
         bool needsMouseHook = mousePattern != MouseActivationPattern.None
             || dismissOnExternalClick
@@ -358,6 +362,12 @@ public sealed class DesktopIntegration : IDisposable
         _disposed = true;
         CancelMouseActivationCompletion();
         CancelDesktopDoubleClick();
+        if (_chordReleaseReceiver != null)
+        {
+            _chordReleaseReceiver.Completed -= OnChordReleaseCompleted;
+            _chordReleaseReceiver.Dispose();
+            _chordReleaseReceiver = null;
+        }
         _window.SourceInitialized -= OnSourceInitialized;
         _window.Closed -= OnWindowClosed;
 
@@ -548,6 +558,11 @@ public sealed class DesktopIntegration : IDisposable
                 return CallNextHookSafely(code, wParam, lParam);
             }
 
+            // 通過済みの右DOWNには、Windows自身が処理するUPを対応させる。
+            // 呼び出し中の解放は自前の受け取り窓で処理し、低レベルフックでは止めない。
+            if (_chordReleaseReceiver?.IsActive == true)
+                return CallNextHookSafely(code, wParam, lParam);
+
             if (TryConsumeSuppressedUp(message, mouse.MouseData))
             {
                 if (!HasSuppressedButtonUps)
@@ -673,16 +688,15 @@ public sealed class DesktopIntegration : IDisposable
             {
                 bool canActivate = !_mouseActivationState.ShouldRestoreOnMove(mouse.Point.X, mouse.Point.Y)
                     && _mouseActivationState.IsExpectedChord(_mousePattern, secondButton)
+                    && !HasSuppressedButtonUps
                     && (GetAsyncKeyState(VkRightButton) & unchecked((short)0x8000)) != 0
                     && !AreOtherMouseButtonsDownExcept(primaryButton, secondButton)
                     && CanSafelyInterceptAt(mouse.Point)
-                    && MousePressCancellation.TryCancel(_rightPressTarget, mouse.Point.X, mouse.Point.Y);
+                    && MousePressCancellation.CanTransfer(_rightPressTarget, mouse.Point.X, mouse.Point.Y);
                 _mouseActivationState.Cancel();
                 _rightPressTarget = default;
-                if (canActivate)
+                if (canActivate && _chordReleaseReceiver?.TryBegin(mouse.Point.X, mouse.Point.Y) == true)
                 {
-                    SetSuppressedUp(primaryButton);
-                    SetSuppressedUp(secondButton);
                     QueueMouseActivation();
                     return new IntPtr(1);
                 }
@@ -1342,7 +1356,8 @@ public sealed class DesktopIntegration : IDisposable
     private void QueueMouseActivation()
     {
         long ticket = _mouseActivationTicket = _mouseActivationCompletion.Begin();
-        if (!HasSuppressedButtonUps) _mouseActivationCompletion.Release();
+        if (!HasSuppressedButtonUps && _chordReleaseReceiver?.IsActive != true)
+            _mouseActivationCompletion.Release();
         QueueUiAction(() =>
         {
             if (_disposed) return;
@@ -1351,6 +1366,34 @@ public sealed class DesktopIntegration : IDisposable
             Action? completion = _mouseActivationCompletion.Capture(ticket, _captureMouseActivationCompletion?.Invoke());
             if (completion != null) QueueMouseActivationCompletion(ticket, completion);
         });
+    }
+
+    private bool EnsureChordReleaseReceiver()
+    {
+        if (_chordReleaseReceiver != null) return true;
+        try
+        {
+            _chordReleaseReceiver = new ChordReleaseReceiver();
+            _chordReleaseReceiver.Completed += OnChordReleaseCompleted;
+            return true;
+        }
+        catch (Exception exception)
+        {
+            RaiseWarning($"呼び出し時の解放入力を受け取る窓を用意できませんでした: {exception.Message}");
+            return false;
+        }
+    }
+
+    private void OnChordReleaseCompleted(bool completed)
+    {
+        if (!completed)
+        {
+            CancelMouseActivationCompletion();
+            return;
+        }
+        Action? completion = _mouseActivationCompletion.Release();
+        if (!_disposed && completion != null)
+            QueueMouseActivationCompletion(_mouseActivationTicket, completion);
     }
 
     private void ObserveDesktopDoubleClick(int message, MSLLHOOKSTRUCT mouse)

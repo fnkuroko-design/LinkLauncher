@@ -14,12 +14,10 @@ internal interface IMouseCancellationPlatform
     IntPtr RootWindow(IntPtr window);
     bool TryGetIdentity(IntPtr window, out uint processId, out uint threadId);
     bool TryGetCapture(uint threadId, out IntPtr window);
-    bool NotifyCancelMode(IntPtr window);
 }
 
 /// <summary>
-/// 呼び出しとして使った通常右押下に、標準操作のキャンセルを要求します。
-/// 解放の注入や座標移動は行いません。アプリ独自の押下状態の終了は保証しません。
+/// 呼び出しに使った押下対象と、解放を受け取る候補の同一性・captureを照合します。
 /// </summary>
 internal static class MousePressCancellation
 {
@@ -43,10 +41,10 @@ internal static class MousePressCancellation
         return new MousePressTarget(window, root, process, thread);
     }
 
-    internal static bool TryCancel(MousePressTarget target, int x, int y) =>
-        TryCancel(target, x, y, Win32);
+    internal static bool CanTransfer(MousePressTarget target, int x, int y) =>
+        CanTransfer(target, x, y, Win32);
 
-    internal static bool TryCancel(MousePressTarget target, int x, int y, IMouseCancellationPlatform platform)
+    internal static bool CanTransfer(MousePressTarget target, int x, int y, IMouseCancellationPlatform platform)
     {
         ArgumentNullException.ThrowIfNull(platform);
         if (!target.IsValid || !MatchesOrigin(platform, target.Window, target) || !MatchesRoot(platform, target.Root, target))
@@ -61,9 +59,6 @@ internal static class MousePressCancellation
         if (!platform.TryGetCapture(target.ThreadId, out IntPtr capture)) return false;
         if (capture != IntPtr.Zero && !MatchesOrigin(platform, capture, target)) return false;
 
-        if (capture != IntPtr.Zero && !platform.NotifyCancelMode(capture)) return false;
-        if (target.Window != capture && !platform.NotifyCancelMode(target.Window)) return false;
-        if (target.Root != target.Window && target.Root != capture && !platform.NotifyCancelMode(target.Root)) return false;
         return true;
     }
 
@@ -90,7 +85,6 @@ internal static class MousePressCancellation
     private sealed class Win32MouseCancellationPlatform : IMouseCancellationPlatform
     {
         private const uint GaRoot = 2;
-        private const uint WmCancelMode = 0x001F;
 
         public IntPtr WindowAtPhysicalPoint(int x, int y) => DesktopHitTest.WindowAtPhysicalPoint(x, y);
 
@@ -121,10 +115,6 @@ internal static class MousePressCancellation
             window = info.Capture;
             return true;
         }
-
-        // SendNotifyMessageの成功は要求送信の受付を示すだけで、処理完了やモード解除のACKではない。
-        public bool NotifyCancelMode(IntPtr window) =>
-            SendNotifyMessage(window, WmCancelMode, UIntPtr.Zero, IntPtr.Zero);
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -148,7 +138,4 @@ internal static class MousePressCancellation
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetGUIThreadInfo(uint threadId, ref GUITHREADINFO info);
 
-    [DllImport("user32.dll", EntryPoint = "SendNotifyMessageW", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool SendNotifyMessage(IntPtr window, uint message, UIntPtr wParam, IntPtr lParam);
 }
