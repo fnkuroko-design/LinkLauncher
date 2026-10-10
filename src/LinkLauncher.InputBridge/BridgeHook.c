@@ -12,6 +12,7 @@
 #define BRIDGE_PROBE_CAPTURE_FAILED 32
 #define BRIDGE_PROBE_FOREGROUND 40
 #define BRIDGE_PROBE_CONTEXT 41
+#define BRIDGE_TRACE_MESSAGE (WM_APP + 0x3B)
 
 #define BRIDGE_OTHER_BUTTON_MIDDLE 0x00000001L
 #define BRIDGE_OTHER_BUTTON_X1 0x00000002L
@@ -122,6 +123,9 @@ static LONG BridgeReadOtherButtons(void)
 
 static HINSTANCE g_module = NULL;
 static HHOOK g_mouseHook = NULL;
+#if defined(BRIDGE_INPUT_PROBE) && defined(_WIN64)
+static HHOOK g_callWndProbeHook = NULL;
+#endif
 static HANDLE g_mapping = NULL;
 static BRIDGE_SHARED *g_shared = NULL;
 static volatile LONG g_mapInitState = 0;
@@ -305,8 +309,79 @@ static void BridgePostProbe(BRIDGE_SHARED *shared, WPARAM stage, LPARAM detail)
     owner = (HWND)(ULONG_PTR)shared->ownerHwnd;
     if (owner != NULL) PostMessageW(owner, BRIDGE_PROBE_MESSAGE, stage, detail);
 }
+
+/* Temporary passive ordering trace. Shared only by this preview DLL's copies. */
+#pragma data_seg(".LLTRC")
+static volatile LONG g_tracePid = 0;
+static volatile LONG g_traceTid = 0;
+static volatile LONG g_traceTick = 0;
+#pragma data_seg()
+#pragma comment(linker, "/SECTION:.LLTRC,RWS")
+
+#if defined(_WIN64)
+static BOOL BridgeTraceIsCurrent(DWORD pid, DWORD tid)
+{
+    DWORD traceTick = (DWORD)InterlockedCompareExchange(&g_traceTick, 0, 0);
+    return pid == (DWORD)InterlockedCompareExchange(&g_tracePid, 0, 0) &&
+        tid == (DWORD)InterlockedCompareExchange(&g_traceTid, 0, 0) &&
+        (DWORD)(GetTickCount() - traceTick) <= 3000UL;
+}
+#endif
+
+static void BridgeStartTrace(DWORD pid, DWORD tid)
+{
+    InterlockedExchange(&g_traceTick, (LONG)GetTickCount());
+    InterlockedExchange(&g_traceTid, (LONG)tid);
+    InterlockedExchange(&g_tracePid, (LONG)pid);
+}
+
+static void BridgePostTrace(BRIDGE_SHARED *shared, UINT kind, UINT message, DWORD detail)
+{
+#if defined(_WIN64)
+    HWND owner;
+    ULONGLONG payload;
+    if (shared == NULL || InterlockedCompareExchange(&shared->enabled, 0, 0) == 0) return;
+    if (InterlockedCompareExchange(&g_tracePid, 0, 0) == 0 ||
+        (DWORD)(GetTickCount() - (DWORD)InterlockedCompareExchange(&g_traceTick, 0, 0)) > 3000UL ||
+        (GetCurrentProcessId() != (DWORD)InterlockedCompareExchange(&g_tracePid, 0, 0) &&
+            GetCurrentProcessId() != (DWORD)shared->ownerPid)) return;
+    owner = (HWND)(ULONG_PTR)shared->ownerHwnd;
+    payload = ((ULONGLONG)GetTickCount() << 32) | (ULONGLONG)detail;
+    if (owner != NULL)
+        PostMessageW(owner, BRIDGE_TRACE_MESSAGE,
+            (WPARAM)((kind << 16) | (message & 0xffffU)), (LPARAM)payload);
+#else
+    (void)shared; (void)kind; (void)message; (void)detail;
+#endif
+}
+
+#if defined(_WIN64)
+static LRESULT CALLBACK BridgeCallWndProbe(int code, WPARAM wParam, LPARAM lParam)
+{
+    if (code == HC_ACTION && lParam != 0)
+    {
+        const CWPSTRUCT *event = (const CWPSTRUCT *)lParam;
+        switch (event->message)
+        {
+        case WM_RBUTTONDOWN: case WM_RBUTTONUP:
+        case WM_LBUTTONDOWN: case WM_LBUTTONUP:
+        case WM_CONTEXTMENU: case WM_CANCELMODE: case WM_CAPTURECHANGED:
+        case WM_ENTERMENULOOP: case WM_EXITMENULOOP: case WM_INITMENUPOPUP:
+            if (BridgeTraceIsCurrent(GetCurrentProcessId(), GetCurrentThreadId()))
+                BridgePostTrace(BridgeEnsureShared(), 1, event->message, GetCurrentProcessId());
+            break;
+        default:
+            break;
+        }
+    }
+    /* Never alter a notification or its result, including negative hook codes. */
+    return CallNextHookEx(NULL, code, wParam, lParam);
+}
+#endif
 #else
 #define BridgePostProbe(shared, stage, detail) ((void)0)
+#define BridgeStartTrace(pid, tid) ((void)0)
+#define BridgePostTrace(shared, kind, message, detail) ((void)0)
 #endif
 
 static BOOL BridgeIsRootTarget(HWND window, HWND *root, DWORD *pid, DWORD *tid)
@@ -541,6 +616,7 @@ static BOOL BridgeBeginGesture(
         AllowSetForegroundWindow(ownerPid);
     }
 
+    BridgePostTrace(shared, 4, 0, sourcePid);
     if (!BridgeReleaseSourceCapture(
             sourcePid,
             sourceTid,
@@ -554,6 +630,7 @@ static BOOL BridgeBeginGesture(
         BridgeRejectSequence(shared, sequence);
         return FALSE;
     }
+    BridgePostTrace(shared, 5, 0, sourcePid);
 
     foreground = GetForegroundWindow();
     foregroundPid = 0;
@@ -680,6 +757,13 @@ static LRESULT CALLBACK BridgeMouseProc(int code, WPARAM wParam, LPARAM lParam)
     if (code == HC_NOREMOVE)
     {
         BRIDGE_PROBE_COUNT(hcNoRemove);
+#if defined(BRIDGE_INPUT_PROBE) && defined(_WIN64)
+        if (lParam != 0 &&
+            (BridgeIsRightDown((UINT)wParam) || BridgeIsLeftDown((UINT)wParam) ||
+                BridgeIsRightUp((UINT)wParam) || BridgeIsLeftUp((UINT)wParam)) &&
+            BridgeTraceIsCurrent(GetCurrentProcessId(), GetCurrentThreadId()))
+            BridgePostTrace(BridgeEnsureShared(), 2, (UINT)wParam, GetCurrentProcessId());
+#endif
         return CallNextHookEx(NULL, code, wParam, lParam);
     }
     if (code != HC_ACTION)
@@ -821,6 +905,8 @@ static LRESULT CALLBACK BridgeMouseProc(int code, WPARAM wParam, LPARAM lParam)
         }
         if (candidateStarted)
         {
+            BridgeStartTrace(targetPid, targetTid);
+            BridgePostTrace(shared, 3, (UINT)wParam, targetPid);
             BRIDGE_PROBE_COUNT(candidate);
             BridgePostProbe(shared, BRIDGE_PROBE_CONTEXT, sourceContext ? 1 : 2);
             BridgePostProbe(shared, BRIDGE_PROBE_RIGHT_SEEN, 0);
@@ -847,6 +933,9 @@ static LRESULT CALLBACK BridgeMouseProc(int code, WPARAM wParam, LPARAM lParam)
             (BRIDGE_U64)(ULONG_PTR)ownerRoot);
         decision = BridgeStateOnUp(&shared->state, button, targetMatches, tick, &completedSequence);
         BridgeUnlock(shared);
+        BridgePostTrace(shared, 6, (UINT)wParam,
+            ((DWORD)decision & 0xffUL) | (targetMatches ? 0x100UL : 0UL) |
+                (sourceContext ? 0x200UL : 0UL));
         if (completedSequence != 0)
         {
             BridgePostOwnerMessage(shared, (DWORD)completedSequence, BRIDGE_OWNER_COMPLETE);
@@ -938,6 +1027,7 @@ static LRESULT CALLBACK BridgeMouseProc(int code, WPARAM wParam, LPARAM lParam)
         if (decision != BRIDGE_DECISION_BEGIN) return CallNextHookEx(NULL, code, wParam, lParam);
 
         BridgePostProbe(shared, BRIDGE_PROBE_LEFT_CANDIDATE, (LPARAM)sequence);
+        BridgePostTrace(shared, 3, (UINT)wParam, targetPid);
         beginAccepted = BridgeBeginGesture(
             shared,
             (DWORD)sequence,
@@ -1081,6 +1171,10 @@ BOOL __cdecl BridgeInstall(HWND owner, DWORD ownerPid)
         shared->statusBits |= (LONG)BRIDGE_STATUS_HOOK32;
     }
     BridgeUnlock(shared);
+#if defined(BRIDGE_INPUT_PROBE) && defined(_WIN64)
+    g_callWndProbeHook = SetWindowsHookExW(WH_CALLWNDPROC, BridgeCallWndProbe, g_module, 0);
+    BridgePostProbe(shared, 54, g_callWndProbeHook != NULL ? 1 : -(LPARAM)GetLastError());
+#endif
     return TRUE;
 }
 
@@ -1109,6 +1203,19 @@ void __cdecl BridgeStop(void)
         UnhookWindowsHookEx(g_mouseHook);
         g_mouseHook = NULL;
     }
+#if defined(BRIDGE_INPUT_PROBE) && defined(_WIN64)
+    if (g_callWndProbeHook != NULL)
+    {
+        UnhookWindowsHookEx(g_callWndProbeHook);
+        g_callWndProbeHook = NULL;
+    }
+    if (isOwner)
+    {
+        InterlockedExchange(&g_tracePid, 0);
+        InterlockedExchange(&g_traceTid, 0);
+        InterlockedExchange(&g_traceTick, 0);
+    }
+#endif
     if (!isOwner && shared != NULL && BridgeTryLock(shared))
     {
         shared->statusBits &= ~(LONG)BRIDGE_STATUS_HOOK32;

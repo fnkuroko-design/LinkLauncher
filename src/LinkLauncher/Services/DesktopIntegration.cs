@@ -519,6 +519,14 @@ public sealed class DesktopIntegration : IDisposable
     private IntPtr WindowMessageHook(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
 #if INPUT_PROBE
+        if (message == 0x803B)
+        {
+            handled = true;
+            uint tag = unchecked((uint)wParam.ToInt64());
+            ulong payload = unchecked((ulong)lParam.ToInt64());
+            ChordInputProbe.Record($"native trace kind={tag >> 16} message={tag & 0xffff:X4} tick={payload >> 32} detail={unchecked((uint)payload)}");
+            return IntPtr.Zero;
+        }
         if (message == 0x803A)
         {
             handled = true;

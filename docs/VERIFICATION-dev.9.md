@@ -77,6 +77,21 @@ input-dのChordReleaseChecksは1回実行した。12個のチェックが成功�
 - 起動記録は`observations/20261011-010149-371c7b6ab3bd4d3b9ddf810315d32548/`。読み取り専用の`Read-Probe.ps1`で実コールバックの到達と通常のLEFTDOWN/UPを確認し、`snapshot-startup.json`に保存した。共有取得・target照会・lockの失敗は0だった。右＋左の実機受入はユーザーの回答待ち。
 - `library.json`の起動前後のSHA-256は`0f5b6664ce1f7f2ab81caa138671589aeca6de47ca715ce50f5094e59f522549`で一致した。設定保存・スタートアップ登録変更・入力生成・カーソル自動移動・Computer Useは行っていない。
 
+### input-gのユーザー確認（受入未達）
+
+- ユーザー報告は、デスクトップで2回とも表示され、解放後の左クリックはランチャー・元画面の両方で使えた。一方、左を押した時点で元の右メニューも開き、デスクトップを左クリックするまで残った。呼び出し・左クリック停止は改善したが、メニュー抑止の受入条件は未達。
+- 保存した`input-at-user-result.log`では複数のBEGIN/ACK/COMPLETEが成立し、完了直後と後続確認の非同期右・左ボタン状態は両方0だった。これを元アプリの内部状態やメニュー抑止の成功とは扱わない。source-context（stage 41 detail 1）での受理だった。ログには別の候補でcapture解除失敗（stage 32 detail 3）もあり、全ての操作が成功したとは報告しない。
+- 起動前と起動直後はユーザーデータのハッシュが一致したが、操作後の`library.json`は`d440e36535843cb36a769c1af9040650df675f4d94c6c822f148a7df47e8ff38`となり、同一ではない。ツールによるデータの置換・設定保存は行っていない。アプリの通常利用中の更新と区別し、操作後も変わっていないとは記録しない。
+- ユーザーが検証アプリを終了したうえで、LinkLauncherなしのデスクトップで右保持→左クリックを試し、左押下で右クリック完了・メニュー表示になる通常挙動を確認した。rootは本体・補助プロセスが残っていないことを確認した。これはユーザーの比較観測であり、物理キー状態や生成されたWindowsメッセージの種類をrootが直接確認した証拠ではない。
+
+### input-hの最小限の順序観測（準備中）
+
+- 元メニューが左押下で出るため、右UP抑止だけで解決すると扱わない。gのsource側ReleaseCaptureをWM_CANCELMODEに変える案は、この時点では実装していない。通知順序を確定してから変更を判断する。
+- 編集対象は`BridgeHook.c`の`BRIDGE_INPUT_PROBE`限定の観測、`DesktopIntegration.cs`のログ表示、開発記録。gの物理入力通過・候補・ACK・解放処理は変更しない。
+- 試作だけにWH_CALLWNDPROCを追加し、全ての通知を次のフックへ渡す。直近の右DOWNの対象PID/TIDかつ3秒以内のR/L通知、WM_CONTEXTMENU、WM_CANCELMODE、WM_CAPTURECHANGED、メニュー開始・終了・初期化だけを非同期記録する。対象のウィンドウ手続きを変更・subclass化しない。捕捉解除の前後、HC_NOREMOVEでの押下照会、HC_ACTIONの押下受理・UP処理結果を同じGetTickCount時刻とともに記録する。
+- stage 54は受動観測フックの登録結果。追加の`0x803B`通知のkind 1はWndProc直前、2はHC_NOREMOVE、3は押下候補、4/5は既存のcapture解除前後、6はUP処理。kind 6のdetailの下位8bitはdecision（0通過、2消費、3完了）、bit 8はtarget一致、bit 9はsource-context。ログの受信時刻だけで送信元の順序を判断せず、記録したtickを併用する。
+- 受入は観測の到達と順序の判別。これは修正版の実機合格ではない。全ての診断ソース・フック・ログを正式配布物から除去する。
+
 ## 試作の比較と復元
 
 2版の同時起動は単一起動制御でできない。旧dev.8をトレイから終了し、dev.9の試作用EXEを起動する。比較中は設定の保存を行わず、スタートアップ登録先を変更しない。元へ戻す場合はdev.9をトレイから終了し、保持した `artifacts/releases/LinkLauncher-v0.1.2-dev.8-win-x64/LinkLauncher/LinkLauncher.exe` を起動する。

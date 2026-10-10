@@ -115,10 +115,19 @@ input-gはソース`1d8e3f3c6d81bf0cd96b3f01eab8bc858ec3fb30`からビルド・�
 
 gの`contextSkipped`はsource側ではないコールバックの観測数であり、installer側で処理を続けた場合も含む。fの同名カウンターと異なり、入力を全て処理対象外にした回数として解釈しない。
 
+## メニュー生成の順序の観測（input-h）
+
+gのユーザー確認では2回とも表示され左クリックも使えたが、左押下の時点で元のデスクトップメニューが開き、元画面での左クリックまで残った。受入未達。アプリ終了後にも同じ右保持→左押下でデスクトップのメニューが開いたという比較報告がある。これを右DOWNで編集する特殊アプリの問題として除外しない。
+
+右DOWNを既に通しているため、元アプリの内部状態をUP抑止だけで必ず正常化できない。gのログは物理ボタンの解放を確認できたが、メニュー生成がHC_NOREMOVE時の照会、HC_ACTIONより前の標準処理、またはcapture解除で始まったかを記録していない。source側のReleaseCaptureをWM_CANCELMODEへ置換する案はまだ実装せず、hでは通知順序だけを受動観測する。物理ボタン状態自体が解除されたとの断定と、元アプリが右クリックを完了扱いにしたとの観測は区別する。
+
+`BRIDGE_INPUT_PROBE`限定のWH_CALLWNDPROCはメッセージを変更せずCallNextHookExへ渡し、対象PID/TIDに3秒の観測窓を設ける。通常WH_MOUSEのHC_NOREMOVEも引き続きそのまま通す。記録のGetTickCountとcapture解除前後を比較し、WndProc通知が観測できなければ原因を確定したと扱わない。汎用的なWM_CANCELMODEの標準動作はメニュー処理取消とcapture解除だが、アプリ独自の処理を元に戻す保証ではない。正式版にはこの観測機構を残さない。
+
 ## 一次資料
 
 - [LowLevelMouseProc](https://learn.microsoft.com/en-us/windows/win32/winmsg/lowlevelmouseproc): 次のフックへの受け渡しと抑止。
 - [MouseProc](https://learn.microsoft.com/en-us/windows/win32/winmsg/mouseproc): GetMessage/PeekMessage段階のマウスメッセージ処理とHC_ACTION。
+- [CallWndProc](https://learn.microsoft.com/en-us/windows/win32/winmsg/callwndproc): ウィンドウ手続きに渡る前の受動観測。メッセージの変更はできない。
 - [SetWindowsHookExW](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwindowshookexw): 他プロセスのフックと32bit・64bitの制約。
 - [入力再送の順序](https://devblogs.microsoft.com/oldnewthing/20121206-00/?p=5903): 物理UPと後挿入DOWNの順序が押しっぱなしを生む例。
 - [GetAsyncKeyState](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getasynckeystate): ボタン状態と照会失敗。対象アプリの押下フラグとは区別する。
