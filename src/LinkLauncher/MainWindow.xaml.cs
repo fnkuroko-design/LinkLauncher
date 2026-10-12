@@ -51,8 +51,22 @@ public sealed class CategoryNode : INotifyPropertyChanged
     }
 }
 
-public sealed class LinkRow
+public sealed class LinkRow : INotifyPropertyChanged
 {
+    private ImageSource? _icon;
+    public ImageSource? Icon
+    {
+        get => _icon;
+        internal set
+        {
+            if (ReferenceEquals(_icon, value)) return;
+            _icon = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Icon)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(HasIcon)));
+        }
+    }
+    public bool HasIcon => Icon != null;
+    public event PropertyChangedEventHandler? PropertyChanged;
     public LinkItem Item { get; }
     public string Name => Item.Name;
     public string Target => Item.Target;
@@ -84,6 +98,7 @@ public partial class MainWindow : Window
     private readonly LibraryStore _store;
     private readonly DesktopIntegration _desktop;
     private readonly StartupRegistration _startup = new();
+    private readonly ShellIconService _linkIcons = new();
     private readonly DispatcherTimer _pointerLeaveDismissTimer = new(DispatcherPriority.Background)
     { Interval = TimeSpan.FromMilliseconds(150) };
     private Library _library;
@@ -130,7 +145,7 @@ public partial class MainWindow : Window
             CancelPointerLeaveDismiss();
         };
         ThemeManager.ThemeChanged += OnThemeChanged;
-        Closed += (_, _) => ThemeManager.ThemeChanged -= OnThemeChanged;
+        Closed += (_, _) => { ThemeManager.ThemeChanged -= OnThemeChanged; _linkIcons.Dispose(); };
         SourceInitialized += (_, _) =>
         {
             _desktop.Configure(_library.Settings.Hotkey, _library.Settings.MousePattern, _library.Settings.DismissOnDeactivate);
@@ -425,12 +440,26 @@ public partial class MainWindow : Window
     }
 
     private void AddLink_Click(object sender, RoutedEventArgs e) => EditLink(null);
+
+    private void LinkIcon_Loaded(object sender, RoutedEventArgs e) => LoadLinkIcon(sender);
+    private void LinkIcon_Changed(object sender, DependencyPropertyChangedEventArgs e) => LoadLinkIcon(sender);
+
+    private async void LoadLinkIcon(object sender)
+    {
+        if (_exiting || sender is not FrameworkElement element || !element.IsLoaded || !element.IsVisible ||
+            element.DataContext is not LinkRow row || row.HasIcon || row.Item.Kind == LinkKind.Web) return;
+        ImageSource? icon = await _linkIcons.GetAsync(row.Target, row.Item.Kind);
+        // A recycled visual may now represent a different row; update only the originally requested row.
+        if (!_exiting) row.Icon = icon;
+    }
+
     private void EditLink(LinkItem? item, string? initialTarget = null)
     {
         if (_library.Categories.Count == 0) { AddCategory_Click(this, new RoutedEventArgs()); if (_library.Categories.Count == 0) return; }
         var dialog = new LinkEditor(_library, _categoryId ?? _library.Categories[0].Id, item, initialTarget) { Owner = this };
         if (Modal(() => dialog.ShowDialog()) != true || dialog.Result == null) return;
         var result = dialog.Result;
+        _linkIcons.Clear();
         if (ApplyChange(l => LibraryOrder.UpsertLink(l, result))) ShowNotice("「" + result.Name + "」を保存しました。");
     }
 
@@ -676,6 +705,7 @@ public partial class MainWindow : Window
             // The machine's input settings stay with this machine.
             incoming.Settings = _library.Settings;
             _store.Save(incoming); _library = incoming;
+            _linkIcons.Clear();
             _categoryId = null; _view = "all"; SearchBox.Clear(); Refresh(true);
             ShowNotice("リンクデータを取り込みました。");
         }
