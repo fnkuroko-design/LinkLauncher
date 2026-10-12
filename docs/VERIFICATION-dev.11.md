@@ -17,6 +17,19 @@
 
 回帰試験は本体Startupを無効化したApplicationと、本体XAMLから読み込んだリソースを使用します。MainWindowを起動せず、ユーザーの登録データや常駐版を操作しません。試験用の環境変数は試験プロセス内で設定し、finallyで元に戻します。
 
-今回変更していない入力フック・押下解放・テーマ・アイコン抽出そのものの試験は繰り返していません。実GUIでの追加手動確認、マウス入力生成、カーソル操作、Computer Use、常駐版の停止・切替、スタートアップ登録変更は行っていません。
+今回変更していない入力フック・押下解放・テーマ・アイコン抽出そのものの試験は繰り返していません。上記試験では実GUIでの追加手動確認、マウス入力生成、カーソル操作、Computer Use、常駐版の停止・切替、スタートアップ登録変更は行っていません。
 
 検証記録は `artifacts/checks/full-review-20261013-011844/` に保持します。`regression-result-2.txt`、`core-result.txt`、`unicode-build-result.txt` と `unicode-build-files.json` が成功記録です。調査・検証用データは配布物へ含めません。
+
+## 配布と起動確認
+
+- 配布ソース: `43afb9c7b860439b78219fe152dcaa2fe25a68b2`。Release / win-x64 / framework-dependent publish成功。FileVersionは `0.1.3.11`、ProductVersionは `0.1.3-dev.11+43afb9c7b860439b78219fe152dcaa2fe25a68b2`。
+- ZIP: `artifacts/releases/LinkLauncher-v0.1.3-dev.11-win-x64.zip`、194,067 bytes、展開後417,105 bytes。
+- SHA-256: `d2eb8f161b81f8afbaad879d936769f11f5b3b9ded1210bcca4818337e00989e`。sidecarと一致。
+- 全10ファイルが `LinkLauncher/` 配下にあり、CRC、配布フォルダーと新規展開先の全ハッシュ一致を確認。ランタイム・ユーザーデータ・PDB・ログ・試験用データを含めない。ライセンスと.NETライセンスを同梱する。
+- .NET 10 Core/Desktopの共有フレームワークを参照。native DLLはx64、importsはUSER32/KERNEL32のみ、診断共有セクション・ロガーを含めない。既存13個のZIPのハッシュが一致し、dev.10も保持した。
+- レビュー開始時と配布確認後のユーザー `library.json` のハッシュは一致した。現在のデータや起動済み旧版を検証で変更していない。
+- 配布後、常駐プロセスがないことを再確認してdev.11を `--background` で起動した。PID 34004で単独常駐し、共有状態の読み取り専用照会でenabled=1/status=53/ABI version=3/136 bytes/ownerPID一致を確認した。これはEXEの起動・登録確認で、実マウス操作の再試験ではない。
+- dev.11起動直前・直後のユーザーデータのハッシュも一致。設定保存・スタートアップ先変更・強制停止・入力生成・カーソル移動は行っていない。起動の記録は `startup-result.json` に保持する。
+
+この開発版の成果物を保持し、GitHubへのpush・公開は行っていない。戻す場合はdev.11をトレイから終了し、保持済み `C:\APP\LinkLauncher\LinkLauncher.exe` を起動する。比較中は設定を保存せず、スタートアップ先を変更しない。
