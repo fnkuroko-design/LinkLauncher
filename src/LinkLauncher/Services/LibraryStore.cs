@@ -36,6 +36,7 @@ public sealed class LibraryStore
 
     private static readonly Regex SchemePattern = new(@"^([A-Za-z][A-Za-z0-9+.-]*):", RegexOptions.Compiled | RegexOptions.CultureInvariant);
     private bool _preservationFailed;
+    private bool _preserveRecoveryBackup;
 
     public LibraryStore(string? directory = null)
     {
@@ -61,6 +62,7 @@ public sealed class LibraryStore
     {
         RecoveryNotice = null;
         _preservationFailed = false;
+        _preserveRecoveryBackup = false;
         try
         {
             FileAttributes attributes = File.GetAttributes(FilePath);
@@ -109,7 +111,10 @@ public sealed class LibraryStore
         }
 
         Directory.CreateDirectory(DirectoryPath);
-        WriteAtomically(FilePath, data, createBackup: true);
+        // A corrupt primary must never replace the valid backup used for recovery.
+        // Keep this flag through failed saves; resume normal rotation only after a successful commit.
+        WriteAtomically(FilePath, data, createBackup: !_preserveRecoveryBackup);
+        _preserveRecoveryBackup = false;
         RecoveryNotice = null;
     }
 
@@ -275,6 +280,7 @@ public sealed class LibraryStore
         try
         {
             Library backup = ReadValidated(FilePath + ".bak");
+            _preserveRecoveryBackup = true;
             RecoveryNotice = "ライブラリ本体が見つからなかったため、バックアップから復元しました。";
             return backup;
         }
@@ -295,6 +301,7 @@ public sealed class LibraryStore
 
     private Library RecoverPrimary(Exception originalError)
     {
+        _preserveRecoveryBackup = true;
         string preserveNotice = PreserveCorruptCopy(FilePath);
         try
         {
@@ -339,8 +346,33 @@ public sealed class LibraryStore
         }
 
         Validate(library);
+        NormalizeCategoryReferences(library);
         MigrateMouseSettings(json, library.Settings);
         return library;
+    }
+
+    private static void NormalizeCategoryReferences(Library library)
+    {
+        var categories = library.Categories.ToDictionary(c => c.Id, StringComparer.OrdinalIgnoreCase);
+        foreach (Category category in library.Categories)
+            category.ParentId = string.IsNullOrWhiteSpace(category.ParentId) ? null : categories[category.ParentId].Id;
+        foreach (LinkItem link in library.Links) link.CategoryId = categories[link.CategoryId].Id;
+    }
+
+    internal static void ValidateCategoryDraft(Category category) =>
+        ValidateText(category.Name, MaxCategoryNameLength, "カテゴリ名", allowEmpty: false);
+
+    internal static void ValidateLinkDraft(LinkItem link)
+    {
+        ValidateText(link.Name, MaxLinkNameLength, "リンク名", allowEmpty: false);
+        ValidateText(link.Target, MaxTargetLength, "リンク先", allowEmpty: false);
+        ValidateText(link.Tags, MaxTagsLength, "タグ", allowEmpty: true);
+        ValidateText(link.Note, MaxNoteLength, "メモ", allowEmpty: true);
+        if (!Enum.IsDefined(link.Kind))
+            throw new InvalidDataException($"リンクの種類が正しくありません: {link.Name}");
+        string normalizedTarget = NormalizeTarget(link.Target);
+        if (IsHttpTarget(normalizedTarget) != (link.Kind == LinkKind.Web))
+            throw new InvalidDataException($"リンクの種類とリンク先が一致しません: {link.Name}");
     }
 
     private static void MigrateMouseSettings(string json, LauncherSettings settings)
@@ -426,7 +458,7 @@ public sealed class LibraryStore
             }
 
             ValidateId(category.Id, "カテゴリ");
-            ValidateText(category.Name, MaxCategoryNameLength, "カテゴリ名", allowEmpty: false);
+            ValidateCategoryDraft(category);
             if (category.Order is < 0)
             {
                 throw new InvalidDataException($"カテゴリの並び順が正しくありません: {category.Name}");
@@ -488,14 +520,7 @@ public sealed class LibraryStore
                 throw new InvalidDataException($"リンクのカテゴリが存在しません: {link.Name}");
             }
 
-            ValidateText(link.Name, MaxLinkNameLength, "リンク名", allowEmpty: false);
-            ValidateText(link.Target, MaxTargetLength, "リンク先", allowEmpty: false);
-            ValidateText(link.Tags, MaxTagsLength, "タグ", allowEmpty: true);
-            ValidateText(link.Note, MaxNoteLength, "メモ", allowEmpty: true);
-            if (!Enum.IsDefined(link.Kind))
-            {
-                throw new InvalidDataException($"リンクの種類が正しくありません: {link.Name}");
-            }
+            ValidateLinkDraft(link);
 
             if (link.OpenCount < 0)
             {
@@ -507,12 +532,6 @@ public sealed class LibraryStore
                 throw new InvalidDataException($"最終起動日時が未来になっています: {link.Name}");
             }
 
-            string normalizedTarget = NormalizeTarget(link.Target);
-            bool isWeb = IsHttpTarget(normalizedTarget);
-            if (isWeb != (link.Kind == LinkKind.Web))
-            {
-                throw new InvalidDataException($"リンクの種類とリンク先が一致しません: {link.Name}");
-            }
         }
 
         ValidateText(library.Settings.Hotkey, 100, "ショートカット", allowEmpty: false);

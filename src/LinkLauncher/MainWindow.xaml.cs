@@ -279,7 +279,11 @@ public partial class MainWindow : Window
     }
 
     private bool ApplyChange(Action<Library> change, bool rebuildTree = true)
+        => TryApplyChange(change, rebuildTree, out _);
+
+    private bool TryApplyChange(Action<Library> change, bool rebuildTree, out string? error)
     {
+        error = null;
         try
         {
             var next = JsonSerializer.Deserialize<Library>(JsonSerializer.Serialize(_library))!;
@@ -290,10 +294,11 @@ public partial class MainWindow : Window
             SaveStatus.Text = "●  ローカルに保存";
             return true;
         }
-        catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException || ex is ArgumentException || ex is InvalidOperationException)
+        catch (Exception ex) when (ex is InvalidDataException or IOException or UnauthorizedAccessException or ArgumentException or InvalidOperationException)
         {
             SaveStatus.Text = "●  保存できません";
-            ShowNotice("変更を保存できませんでした。" + ex.Message, true);
+            error = "変更を保存できませんでした。" + ex.Message;
+            ShowNotice(error, true);
             return false;
         }
     }
@@ -457,22 +462,25 @@ public partial class MainWindow : Window
     {
         if (_library.Categories.Count == 0) { AddCategory_Click(this, new RoutedEventArgs()); if (_library.Categories.Count == 0) return; }
         var dialog = new LinkEditor(_library, _categoryId ?? _library.Categories[0].Id, item, initialTarget) { Owner = this };
+        dialog.TrySave = draft =>
+        {
+            _linkIcons.Clear();
+            return TryApplyChange(l => LibraryOrder.UpsertLink(l, draft), true, out string? error) ? null : error;
+        };
         if (Modal(() => dialog.ShowDialog()) != true || dialog.Result == null) return;
         var result = dialog.Result;
-        _linkIcons.Clear();
-        if (ApplyChange(l => LibraryOrder.UpsertLink(l, result))) ShowNotice("「" + result.Name + "」を保存しました。");
+        ShowNotice("「" + result.Name + "」を保存しました。");
     }
 
     private void AddCategory_Click(object sender, RoutedEventArgs e) => EditCategory(null, _categoryId);
     private void EditCategory(Category? category, string? parentId)
     {
         var dialog = new CategoryEditor(_library, parentId, category) { Owner = this };
+        dialog.TrySave = draft =>
+            TryApplyChange(l => LibraryOrder.UpsertCategory(l, draft), true, out string? error) ? null : error;
         if (Modal(() => dialog.ShowDialog()) != true || dialog.Result == null) return;
         var result = dialog.Result;
-        if (ApplyChange(l => LibraryOrder.UpsertCategory(l, result)))
-        {
-            _view = "all"; _categoryId = result.Id; SearchBox.Clear(); Refresh(true); ShowNotice("「" + result.Name + "」を保存しました。");
-        }
+        _view = "all"; _categoryId = result.Id; SearchBox.Clear(); Refresh(true); ShowNotice("「" + result.Name + "」を保存しました。");
     }
 
     private void DeleteLink(LinkItem item)

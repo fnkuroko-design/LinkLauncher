@@ -19,10 +19,14 @@ internal readonly record struct ShellIconRequest(string Path, LinkKind Kind)
 
     internal static ShellIconRequest? Create(string target, LinkKind kind)
     {
-        if (kind == LinkKind.Web || string.IsNullOrWhiteSpace(target) || !System.IO.Path.IsPathFullyQualified(target))
+        if (kind == LinkKind.Web || string.IsNullOrWhiteSpace(target))
             return null;
-        try { return new ShellIconRequest(System.IO.Path.GetFullPath(target), kind); }
-        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException) { return null; }
+        try
+        {
+            string normalized = LibraryStore.NormalizeTarget(target);
+            return System.IO.Path.IsPathFullyQualified(normalized) ? new ShellIconRequest(normalized, kind) : null;
+        }
+        catch (Exception ex) when (ex is InvalidDataException or ArgumentException or NotSupportedException or PathTooLongException) { return null; }
     }
 }
 

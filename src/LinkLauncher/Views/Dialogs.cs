@@ -83,6 +83,7 @@ internal sealed class LinkEditor : Window
     private readonly TextBlock _error = new() { Foreground = Brushes.Firebrick, TextWrapping = TextWrapping.Wrap, FontSize = 12 };
     private readonly LinkItem? _original;
     public LinkItem? Result { get; private set; }
+    internal Func<LinkItem, string?>? TrySave { get; set; }
 
     public LinkEditor(Library library, string categoryId, LinkItem? original = null, string? initialTarget = null)
     {
@@ -191,16 +192,20 @@ internal sealed class LinkEditor : Window
             if (string.IsNullOrWhiteSpace(_name.Text)) throw new ArgumentException("名前を入力してください。");
             if (_category.SelectedItem is not CategoryChoice category) throw new ArgumentException("カテゴリを選択してください。");
             var target = LibraryStore.NormalizeTarget(_target.Text);
-            Result = new LinkItem
+            var result = new LinkItem
             {
                 Id = _original?.Id ?? Guid.NewGuid().ToString("N"), Name = _name.Text.Trim(), Target = target,
                 CategoryId = category.Id, Tags = _tags.Text.Trim(), Note = _note.Text.Trim(),
                 Kind = LibraryStore.DetectKind(target), IsFavorite = _favorite.IsChecked == true,
                 LastOpenedUtc = _original?.LastOpenedUtc, OpenCount = _original?.OpenCount ?? 0
             };
+            LibraryStore.ValidateLinkDraft(result);
+            string? error = TrySave?.Invoke(result);
+            if (error != null) { _error.Text = error; return; }
+            Result = result;
             DialogResult = true;
         }
-        catch (Exception ex) when (ex is ArgumentException || ex is IOException || ex is NotSupportedException)
+        catch (Exception ex) when (ex is InvalidDataException or ArgumentException or IOException or UnauthorizedAccessException or NotSupportedException)
         { _error.Text = ex.Message; }
     }
 }
@@ -213,6 +218,7 @@ internal sealed class CategoryEditor : Window
     private readonly Library _library;
     private readonly Category? _original;
     public Category? Result { get; private set; }
+    internal Func<Category, string?>? TrySave { get; set; }
 
     public CategoryEditor(Library library, string? parentId, Category? original = null)
     {
@@ -240,8 +246,17 @@ internal sealed class CategoryEditor : Window
         if (name.Length == 0) { _error.Text = "カテゴリ名を入力してください。"; return; }
         if (_library.Categories.Any(c => c.Id != _original?.Id && c.ParentId == parent && string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase)))
         { _error.Text = "同じ階層にその名前のカテゴリがあります。"; return; }
-        Result = new Category { Id = _original?.Id ?? Guid.NewGuid().ToString("N"), Name = name, ParentId = parent };
-        DialogResult = true;
+        try
+        {
+            var result = new Category { Id = _original?.Id ?? Guid.NewGuid().ToString("N"), Name = name, ParentId = parent };
+            LibraryStore.ValidateCategoryDraft(result);
+            string? error = TrySave?.Invoke(result);
+            if (error != null) { _error.Text = error; return; }
+            Result = result;
+            DialogResult = true;
+        }
+        catch (Exception ex) when (ex is InvalidDataException or ArgumentException or IOException or UnauthorizedAccessException)
+        { _error.Text = ex.Message; }
     }
 }
 
@@ -253,7 +268,7 @@ internal sealed record MouseActivationChoice(MouseActivationPattern Pattern, str
         new(MouseActivationPattern.MiddleThenRight, "ホイールを押しながら右クリック", "ホイール＋右",
             "ホイールボタンを押したまま、動かさずに右ボタンを押すとすぐ呼び出します。\nホイールだけで動かした場合は通常のドラッグ、離した場合は通常のクリックになります。"),
         new(MouseActivationPattern.RightThenLeft, "右ボタンを押しながら左クリック", "右＋左",
-            "右ボタンを先に押し、動かさずに左ボタンを押すとすぐ呼び出します。\n通常の右クリック・右ドラッグはそのまま使えます。右を押した瞬間に動く消しゴム等とは競合する場合があります。"),
+            "右ボタンを先に押し、動かさずに左ボタンを押すとすぐ呼び出します。\n通常の右クリック・右ドラッグはそのまま使えます。右ボタンを押した時点で元アプリが実行する処理とは競合する場合があります。"),
         new(MouseActivationPattern.DesktopDoubleClick, "デスクトップの空白をダブルクリック", "デスクトップをダブルクリック",
             "デスクトップのアイコンがない場所をダブルクリックして呼び出します。\nアイコンや他アプリ上のダブルクリックには反応しません。"),
         new(MouseActivationPattern.MiddleClick, "ホイールクリック", "ホイールクリック",

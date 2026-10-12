@@ -4,12 +4,14 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$batchPaths = [System.Collections.Generic.Dictionary[string, string]]::new()
 
 function ConvertTo-BatchPath([string]$Path)
 {
-    # Paths are quoted in the generated batch file. Doubling percent signs keeps
-    # literal percent characters from being treated as environment variables.
-    return '"' + $Path.Replace('%', '%%') + '"'
+    # Keep command files ASCII while passing the actual Unicode paths through the child environment.
+    $name = 'LINKLAUNCHER_NATIVE_PATH_' + $batchPaths.Count
+    $batchPaths.Add($name, $Path)
+    return '"%' + $name + '%"'
 }
 
 function Get-HashText([string]$Text)
@@ -45,11 +47,13 @@ function Invoke-BuildBatch([string]$BatchPath)
 {
     $startInfo = New-Object System.Diagnostics.ProcessStartInfo
     $startInfo.FileName = $env:ComSpec
-    $startInfo.Arguments = '/d /v:off /c ""{0}""' -f $BatchPath
+    $startInfo.Arguments = '/d /v:off /c ""%LINKLAUNCHER_NATIVE_BATCH%""'
     $startInfo.UseShellExecute = $false
     $startInfo.CreateNoWindow = $true
     $startInfo.RedirectStandardOutput = $true
     $startInfo.RedirectStandardError = $true
+    $startInfo.EnvironmentVariables['LINKLAUNCHER_NATIVE_BATCH'] = $BatchPath
+    foreach ($entry in $batchPaths.GetEnumerator()) { $startInfo.EnvironmentVariables[$entry.Key] = $entry.Value }
     $buildCommand = [System.Diagnostics.Process]::Start($startInfo)
     try
     {
