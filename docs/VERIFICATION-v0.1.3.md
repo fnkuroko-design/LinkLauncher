@@ -15,4 +15,12 @@
 
 ## 正式版の配布・公開確認
 
-結果は確認後に追記します。ローカルの監査記録は `artifacts/checks/release-v0.1.3-checks-path.txt` に記載したディレクトリへ保持し、公開ソースや配布ZIPへ含めません。
+- 配布ソース: `3b3bdc7220de0f020c88b49a7884c81f5ad81188`。dev.12完了後の機能ソースの差分はVersion/FileVersionのみ。入力補助DLLのSHA-256はdev.12と一致しました。
+- Release / win-x64 / framework-dependent publish成功。FileVersion `0.1.3.0`、ProductVersion `0.1.3+3b3bdc7220de0f020c88b49a7884c81f5ad81188`。
+- ZIP: `LinkLauncher-v0.1.3-win-x64.zip`、194,787 bytes、展開後419,103 bytes。
+- SHA-256: `66508630fb5a1def6f8ebd35e211ad6c5440c4bf6c4d0578faa0bd9357920e8c`。sidecarと一致。
+- 全10ファイルが `LinkLauncher/` 配下。ZIPのCRC、期待するファイル一覧、配布フォルダーと新規展開先の全ハッシュ一致を確認しました。ライセンス文書を含み、ランタイム・ユーザーデータ・PDB・ログ・調査ツールを含めません。
+- .NET 10 Core/Desktopの共有フレームワークを参照。入力補助DLLはx64、importsはUSER32/KERNEL32のみ。診断共有セクションやロガーを含めません。
+- 既存15個のZIPのハッシュが開始前と一致しました。正式版v0.1.2、dev.12を含め、既存成果物を上書きしていません。
+
+起動確認とGitHub公開の結果は確認後に追記します。ローカルの監査記録は `artifacts/checks/release-v0.1.3-20261013-070535/` に保持し、公開ソースや配布ZIPへ含めません。
