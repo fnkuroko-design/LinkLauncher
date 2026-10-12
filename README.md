@@ -1,16 +1,12 @@
 # LinkLauncher
 
-案件や資料の種類ごとに、ファイル・フォルダー・Webページを整理して開く Windows 用リンクランチャーです。現在の正式版は **v0.1.2** です。
+案件や資料の種類ごとに、ファイル・フォルダー・Webページを整理して開く Windows 用リンクランチャーです。現在の正式版は **v0.1.3** です。
 
 [最新の正式版をダウンロード](https://github.com/fnkuroko-design/LinkLauncher/releases/latest)
 
-v0.1.2では、拡大率の異なるサブディスプレイでのクリック判定と、右＋左で呼び出した後の入力・元メニューの取消しを改善しました。通常の右クリック・右ドラッグは保留や再送をせず、そのまま処理します。デスクトップ空白のダブルクリックによる呼び出しと、カーソルが外へ出たら閉じる任意設定も追加しています。[変更内容](https://github.com/fnkuroko-design/LinkLauncher/blob/main/docs/RELEASE-v0.1.2.md)と[確認範囲](https://github.com/fnkuroko-design/LinkLauncher/blob/main/docs/VERIFICATION-v0.1.2.md)を参照してください。ZIPを展開すると、全ファイルが `LinkLauncher` フォルダーにまとまります。
+v0.1.3では、EXE・アプリのショートカット（`.lnk`）・ファイル・フォルダーにWindowsのアイコンを表示します。表示される行をバックグラウンドで読み込み、取得結果は件数上限付きでメモリにキャッシュします。Webリンクや取得できないリンクは従来の記号を使い、ネットワーク上のパスはファイル種別・フォルダーの標準アイコンを使います。常時のファイル走査やWebアイコンのネット取得はありません。
 
-開発版 **v0.1.3-dev.10** では、EXE・アプリのショートカット（`.lnk`）・ファイル・フォルダーにWindowsのアイコンを表示します。表示される行をバックグラウンドで読み込み、取得結果は件数上限付きでメモリにキャッシュします。Webリンクや取得できないリンクは従来の記号を使い、ネットワーク上のパスはファイル種別・フォルダーの標準アイコンを使います。登録データへの変更やWebアイコンのネット取得はありません。
-
-開発版 **v0.1.3-dev.11** は全体レビューで見つかった5件を修正しています。復旧後の保存失敗でも正常なバックアップを保持し、編集画面は保存に成功するまで閉じません。カテゴリ参照の表記、日本語パスでのビルド、引用符・環境変数を含むリンク先のアイコン取得も改善しました。[レビュー記録](docs/REVIEW-dev.11.md)と[検証記録](docs/VERIFICATION-dev.11.md)を参照してください。
-
-開発版 **v0.1.3-dev.12** は、右＋左の呼び出し処理が応答期限を超えた場合の入力判断を改善しています。表示・非表示の処理を受理してから応答が遅れても、同じ左クリックを元アプリへ通しません。表示前に取消しが確定した要求は実行しません。通常の右クリック・右ドラッグの保留や再送は追加していません。[変更内容](docs/RELEASE-v0.1.3-dev.12.md)と[検証範囲](docs/VERIFICATION-dev.12.md)を参照してください。
+保存失敗時のバックアップ・入力内容の保持、カテゴリ参照の表記、リンク先の正規化、日本語パスでのビルドを改善しました。右＋左の呼び出しでは、表示処理の応答期限を超えても同じ左クリックを元アプリへ通さないよう、受理と取消しの判定を統一しました。通常の右クリック・右ドラッグは保留や再送をせずに処理します。[変更内容](https://github.com/fnkuroko-design/LinkLauncher/blob/main/docs/RELEASE-v0.1.3.md)と[確認範囲](https://github.com/fnkuroko-design/LinkLauncher/blob/main/docs/VERIFICATION-v0.1.3.md)を参照してください。ZIPの全ファイルは `LinkLauncher` フォルダーにまとまります。
 
 ## 主な機能
 
@@ -70,4 +66,4 @@ v0.1.2では、拡大率の異なるサブディスプレイでのクリック�
 
 展開済みアプリは `artifacts/releases/LinkLauncher-v<Version>-win-x64/LinkLauncher/` に出力します。ZIPとSHA-256ファイルは `artifacts/releases/` 直下の `LinkLauncher-v<Version>-win-x64.zip` と `LinkLauncher-v<Version>-win-x64.zip.sha256` です。ZIP内のルートには `LinkLauncher/` があり、アプリの全ファイルはその中にまとまります。既存の同名成果物は上書きしません。GitHub Actionsはmainへのpush、pull request、手動実行でビルドし、ZIPとSHA-256ファイルを14日間保存します。正式な配布物はGitHub Releasesで公開します（自動公開はしません）。
 
-[v0.1.2リリースノート](https://github.com/fnkuroko-design/LinkLauncher/blob/main/docs/RELEASE-v0.1.2.md)と[検証記録](https://github.com/fnkuroko-design/LinkLauncher/blob/main/docs/VERIFICATION-v0.1.2.md)に、配布内容と確認範囲を記載しています。過去の正式版・開発版の記録も `docs/` に保持しています。
+[v0.1.3リリースノート](https://github.com/fnkuroko-design/LinkLauncher/blob/main/docs/RELEASE-v0.1.3.md)と[検証記録](https://github.com/fnkuroko-design/LinkLauncher/blob/main/docs/VERIFICATION-v0.1.3.md)に、配布内容と確認範囲を記載しています。過去の正式版・開発版の記録も `docs/` に保持しています。
