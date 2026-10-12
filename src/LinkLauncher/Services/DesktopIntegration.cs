@@ -80,6 +80,7 @@ public sealed class DesktopIntegration : IDisposable
     private readonly Window _window;
     private readonly uint _processId = (uint)Environment.ProcessId;
     private readonly Action _toggle;
+    private readonly Func<(bool OwnerShown, Action Apply)>? _captureNativeToggle;
     private readonly Action _showSettings;
     private readonly Action _exit;
     private readonly Action? _showLauncher;
@@ -132,10 +133,12 @@ public sealed class DesktopIntegration : IDisposable
 
     public DesktopIntegration(Window window, Action toggle, Action showSettings, Action exit,
         Action? showLauncher = null, Func<Action?>? captureMouseActivationCompletion = null,
-        Func<Func<bool>, bool>? restoreSourceMenuFocus = null)
+        Func<Func<bool>, bool>? restoreSourceMenuFocus = null,
+        Func<(bool OwnerShown, Action Apply)>? captureNativeToggle = null)
     {
         _window = window ?? throw new ArgumentNullException(nameof(window));
         _toggle = toggle ?? throw new ArgumentNullException(nameof(toggle));
+        _captureNativeToggle = captureNativeToggle;
         _showSettings = showSettings ?? throw new ArgumentNullException(nameof(showSettings));
         _exit = exit ?? throw new ArgumentNullException(nameof(exit));
         _showLauncher = showLauncher;
@@ -1408,9 +1411,14 @@ public sealed class DesktopIntegration : IDisposable
         _mouseActivationCallbackQueued = false;
         try
         {
-            // 呼び出し元のWH_MOUSE callbackへ表示結果を返すため、この通知内で表示する。
-            // 元のforegroundプロセスがその後SetForegroundWindowを要求する。
-            _toggle();
+            var action = _captureNativeToggle?.Invoke() ?? (!_window.IsVisible, _toggle);
+            // Commit before any UI effects. A timed-out sender can cancel only an uncommitted request.
+            if (_nativeMouseChord?.TryCommitRequest(sequence, action.Item1) != true)
+            {
+                CancelMouseActivationCompletion();
+                return IntPtr.Zero;
+            }
+            action.Item2();
             if (_nativeMouseChord?.PendingButtons == 0) _mouseActivationCompletion.Release();
             Action? completion = _mouseActivationCompletion.Capture(ticket, _captureMouseActivationCompletion?.Invoke());
             if (completion is not null) QueueMouseActivationCompletion(ticket, completion);

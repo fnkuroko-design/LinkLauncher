@@ -89,7 +89,7 @@ function Invoke-VcBuild([string]$Architecture, [string]$VcVarsAll, [string]$Repo
     $lines.Add('if errorlevel 1 exit /b %errorlevel%')
 
     $compilerFlags = '/nologo /c /TC /utf-8 /W4 /WX /O1 /GS- /Zl /Oi- /Ob0 /DWIN32_LEAN_AND_MEAN /DUNICODE /D_UNICODE'
-    foreach ($unit in @('BridgeHook.c', 'BridgeState.c', 'BridgeMemory.c'))
+    foreach ($unit in @('BridgeHook.c', 'BridgeState.c', 'BridgeMemory.c', 'BridgeRequest.c'))
     {
         $objectFile = Join-Path $objectDirectory ([System.IO.Path]::ChangeExtension($unit, '.obj'))
         $sourceFile = Join-Path $sourceDirectory $unit
@@ -103,9 +103,10 @@ function Invoke-VcBuild([string]$Architecture, [string]$VcVarsAll, [string]$Repo
     $hookObject = Join-Path $objectDirectory 'BridgeHook.obj'
     $stateObject = Join-Path $objectDirectory 'BridgeState.obj'
     $memoryObject = Join-Path $objectDirectory 'BridgeMemory.obj'
-    $lines.Add(('link /nologo /dll /machine:{0} /nodefaultlib /entry:{1} /dynamicbase /nxcompat /opt:ref /opt:icf /out:{2} /implib:{3} /def:{4} {5} {6} {7} user32.lib kernel32.lib' -f `
+    $requestObject = Join-Path $objectDirectory 'BridgeRequest.obj'
+    $lines.Add(('link /nologo /dll /machine:{0} /nodefaultlib /entry:{1} /dynamicbase /nxcompat /opt:ref /opt:icf /out:{2} /implib:{3} /def:{4} {5} {6} {7} {8} user32.lib kernel32.lib' -f `
         $machine, $dllEntry, (ConvertTo-BatchPath $dllPath), (ConvertTo-BatchPath $importLibrary), `
-        (ConvertTo-BatchPath $definitionFile), (ConvertTo-BatchPath $hookObject), (ConvertTo-BatchPath $stateObject), (ConvertTo-BatchPath $memoryObject)))
+        (ConvertTo-BatchPath $definitionFile), (ConvertTo-BatchPath $hookObject), (ConvertTo-BatchPath $stateObject), (ConvertTo-BatchPath $memoryObject), (ConvertTo-BatchPath $requestObject)))
     $lines.Add('if errorlevel 1 exit /b %errorlevel%')
     $lines.Add('exit /b 0')
 
@@ -138,6 +139,8 @@ $requiredFiles = @(
     'BridgeState.c',
     'BridgeState.h',
     'BridgeMemory.c'
+    'BridgeRequest.c'
+    'BridgeRequest.h'
 )
 foreach ($file in $requiredFiles)
 {

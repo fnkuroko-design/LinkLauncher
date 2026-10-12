@@ -135,7 +135,7 @@ public partial class MainWindow : Window
         ShowInTaskbar = true;
         Icon = BitmapFrameFromResource();
         _desktop = new DesktopIntegration(this, ToggleLauncher, ShowSettings, Exit, ShowLauncher,
-            CaptureMouseActivationCompletion, RestoreSourceMenuFocus);
+            CaptureMouseActivationCompletion, RestoreSourceMenuFocus, CaptureNativeMouseToggle);
         _desktop.Warning += warning => ShowNotice(warning, true);
         _desktop.ExternalButtonDown += OnExternalButtonDown;
         IsVisibleChanged += (_, _) =>
@@ -276,6 +276,13 @@ public partial class MainWindow : Window
         if (_modalDepth > 0) { ShowLauncher(); return; }
         if (IsVisible && IsActive) Hide();
         else ShowLauncher();
+    }
+
+    private (bool OwnerShown, Action Apply) CaptureNativeMouseToggle()
+    {
+        // Capture one operation before commitment; focus changes must not switch Show into Hide mid-request.
+        if (_modalDepth > 0) return (IsVisible, ShowLauncher);
+        return IsVisible && IsActive ? (false, Hide) : (true, ShowLauncher);
     }
 
     private bool ApplyChange(Action<Library> change, bool rebuildTree = true)

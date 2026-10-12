@@ -3,9 +3,10 @@
 
 #include <windows.h>
 #include "BridgeState.h"
+#include "BridgeRequest.h"
 
 #define BRIDGE_SHARED_MAGIC 0x434D4C4CUL /* LLMC */
-#define BRIDGE_SHARED_VERSION 3UL
+#define BRIDGE_SHARED_VERSION 4UL
 #define BRIDGE_OWNER_MESSAGE (WM_APP + 0x39)
 #define BRIDGE_OWNER_BEGIN 1
 #define BRIDGE_OWNER_COMPLETE 2
@@ -33,9 +34,10 @@ typedef struct BRIDGE_SHARED
     ULONGLONG ownerHwnd;
     BRIDGE_STATE state;
     BRIDGE_MENU_GUARD menuGuard;
+    volatile LONG64 requestVerdict;
 } BRIDGE_SHARED;
 #pragma pack(pop)
-typedef char BRIDGE_SHARED_SIZE_CHECK[(sizeof(BRIDGE_SHARED) == 136) ? 1 : -1];
+typedef char BRIDGE_SHARED_SIZE_CHECK[(sizeof(BRIDGE_SHARED) == 144) ? 1 : -1];
 
 /* These names are exported through the architecture-specific .def files. */
 BOOL __cdecl BridgeInstall(HWND owner, DWORD ownerPid);
@@ -45,6 +47,7 @@ UINT __cdecl BridgeSequence(void);
 UINT __cdecl BridgeStatus(void);
 UINT __cdecl BridgeHasCandidate(void);
 BOOL __cdecl BridgeTakeRequest(UINT sequence);
+BOOL __cdecl BridgeCommitRequest(UINT sequence, BOOL ownerShown);
 void __cdecl BridgeClearMenuGuard(void);
 UINT __cdecl BridgeRestoreMenuFocus(void);
 

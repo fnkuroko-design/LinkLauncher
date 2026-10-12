@@ -531,9 +531,28 @@ static DWORD BridgeRemainingGestureBudget(DWORD startTick)
 
 static void BridgeRejectSequence(BRIDGE_SHARED *shared, DWORD sequence)
 {
-    if (shared == NULL || sequence == 0 || !BridgeTryLock(shared)) return;
+    if (shared == NULL || sequence == 0) return;
+    if (BridgeRequestResolve(&shared->requestVerdict, sequence) != 0) return;
+    if (!BridgeTryLock(shared)) return;
     BridgeStateReject(&shared->state, (LONG)sequence);
     BridgeUnlock(shared);
+}
+
+/* Called with the state lock held. Only terminal sender decisions advance state;
+ * physical UPs during a slow UI operation still pass while HANDSHAKE is pending. */
+static LONG BridgeFinalizeRequestLocked(BRIDGE_SHARED *shared, DWORD tick)
+{
+    return BridgeRequestFinalize(&shared->requestVerdict, &shared->state, &shared->menuGuard, tick);
+}
+
+static BOOL BridgeTryLockMouseState(BRIDGE_SHARED *shared, DWORD tick)
+{
+    LONG completed;
+    if (!BridgeTryLock(shared)) return FALSE;
+    completed = BridgeFinalizeRequestLocked(shared, tick);
+    /* PostMessage is asynchronous: no UI work or synchronous callback under the lock. */
+    if (completed != 0) BridgePostOwnerMessage(shared, (DWORD)completed, BRIDGE_OWNER_COMPLETE);
+    return TRUE;
 }
 
 static BOOL BridgeReleaseSourceCapture(
@@ -658,15 +677,13 @@ static BOOL BridgeBeginGesture(
     BOOL sourceContext,
     DWORD currentTid)
 {
-    DWORD_PTR uiResult = 0;
-    DWORD_PTR sendResult;
     HWND foreground;
     HWND owner;
     DWORD ownerPid;
     DWORD remaining;
     BOOL accepted = FALSE;
     BOOL promoted = FALSE;
-    LONG decision;
+    LONG choice;
     LONG completedSequence = 0;
     DWORD tick;
     DWORD startTick = GetTickCount();
@@ -706,51 +723,30 @@ static BOOL BridgeBeginGesture(
     }
 
     remaining = BridgeRemainingGestureBudget(startTick);
-    if (remaining == 0)
+    if (remaining != 0)
     {
-        sendResult = 0;
-    }
-    else
-    {
-        sendResult = SendMessageTimeoutW(
+        SendMessageTimeoutW(
             owner,
             BRIDGE_OWNER_MESSAGE,
             (WPARAM)sequence,
             (LPARAM)BRIDGE_OWNER_BEGIN,
             SMTO_ABORTIFHUNG,
             remaining,
-            &uiResult);
+            NULL);
     }
-    if (sendResult != 0 && (uiResult == 1 || uiResult == 2)) accepted = TRUE;
-
+    /* A returned message result is not a commit. The UI commits before effects;
+     * cancellation and commitment compete atomically even if the state lock is busy. */
+    choice = BridgeRequestResolve(&shared->requestVerdict, sequence);
+    accepted = choice > 0;
     tick = GetTickCount();
-    if (accepted && BridgeTryLock(shared))
+    if (BridgeTryLock(shared))
     {
-        decision = BridgeStateAccept(&shared->state, (LONG)sequence, tick, &completedSequence);
-        if (decision == BRIDGE_DECISION_BEGIN || decision == BRIDGE_DECISION_COMPLETE)
-        {
-            BridgeMenuGuardArm(&shared->menuGuard,
-                (BRIDGE_U64)(ULONG_PTR)sourceRoot, sourcePid, sourceTid,
-                uiResult == 1, tick);
-        }
-        else
-        {
-            accepted = FALSE;
-        }
+        completedSequence = BridgeFinalizeRequestLocked(shared, tick);
         BridgeUnlock(shared);
     }
-    else
-    {
-        accepted = FALSE;
-    }
+    if (!accepted) return FALSE;
 
-    if (!accepted)
-    {
-        BridgeRejectSequence(shared, sequence);
-        return FALSE;
-    }
-
-    if (uiResult == 1)
+    if (choice == 1 && IsWindowVisible(owner))
     {
         foreground = GetForegroundWindow();
         if (foreground == sourceForeground)
@@ -829,7 +825,7 @@ static LRESULT CALLBACK BridgeMouseProc(int code, WPARAM wParam, LPARAM lParam)
 
     if (BridgeGetOtherButtonChange((UINT)wParam, mouse, &otherButton, &otherButtonDown))
     {
-        if (!BridgeTryLock(shared))
+        if (!BridgeTryLockMouseState(shared, GetTickCount()))
         {
             return CallNextHookEx(NULL, code, wParam, lParam);
         }
@@ -864,7 +860,7 @@ static LRESULT CALLBACK BridgeMouseProc(int code, WPARAM wParam, LPARAM lParam)
 
     if (wParam == WM_MOUSEMOVE || wParam == WM_NCMOUSEMOVE)
     {
-        if (!BridgeTryLock(shared))
+        if (!BridgeTryLockMouseState(shared, tick))
         {
             return CallNextHookEx(NULL, code, wParam, lParam);
         }
@@ -875,7 +871,7 @@ static LRESULT CALLBACK BridgeMouseProc(int code, WPARAM wParam, LPARAM lParam)
 
     if (BridgeIsRightDown((UINT)wParam))
     {
-        if (!BridgeTryLock(shared))
+        if (!BridgeTryLockMouseState(shared, tick))
         {
             return CallNextHookEx(NULL, code, wParam, lParam);
         }
@@ -926,7 +922,7 @@ static LRESULT CALLBACK BridgeMouseProc(int code, WPARAM wParam, LPARAM lParam)
         LONG button = BridgeIsRightUp((UINT)wParam)
             ? (LONG)BRIDGE_BUTTON_RIGHT
             : (LONG)BRIDGE_BUTTON_LEFT;
-        if (!BridgeTryLock(shared))
+        if (!BridgeTryLockMouseState(shared, tick))
         {
             return CallNextHookEx(NULL, code, wParam, lParam);
         }
@@ -955,7 +951,7 @@ static LRESULT CALLBACK BridgeMouseProc(int code, WPARAM wParam, LPARAM lParam)
         {
             sourceForeground = GetForegroundWindow();
         }
-        if (!BridgeTryLock(shared))
+        if (!BridgeTryLockMouseState(shared, tick))
         {
             return CallNextHookEx(NULL, code, wParam, lParam);
         }
@@ -994,6 +990,7 @@ static LRESULT CALLBACK BridgeMouseProc(int code, WPARAM wParam, LPARAM lParam)
         if (decision == BRIDGE_DECISION_BEGIN)
         {
             sequence = shared->state.requestSequence;
+            BridgeRequestStart(&shared->requestVerdict, (DWORD)sequence);
         }
         BridgeUnlock(shared);
         if (supersededSequence != 0)
@@ -1238,10 +1235,13 @@ UINT __cdecl BridgePendingButtons(void)
 {
     BRIDGE_SHARED *shared = BridgeEnsureShared();
     UINT pending = 0;
+    LONG completed = 0;
     if (shared == NULL) return 0;
     if (!BridgeTryLock(shared)) return 0;
+    completed = BridgeFinalizeRequestLocked(shared, GetTickCount());
     pending = (UINT)shared->state.pendingButtons;
     BridgeUnlock(shared);
+    if (completed != 0) BridgePostOwnerMessage(shared, (DWORD)completed, BRIDGE_OWNER_COMPLETE);
     return pending;
 }
 
@@ -1292,9 +1292,23 @@ BOOL __cdecl BridgeTakeRequest(UINT sequence)
     LONG taken = 0;
     if (shared == NULL || sequence == 0) return FALSE;
     if (!BridgeTryLock(shared)) return FALSE;
-    taken = BridgeStateTakeRequest(&shared->state, (LONG)sequence);
+    if (BridgeRequestIsPending(&shared->requestVerdict, sequence))
+        taken = BridgeStateTakeRequest(&shared->state, (LONG)sequence);
     BridgeUnlock(shared);
     return taken != 0;
+}
+
+BOOL __cdecl BridgeCommitRequest(UINT sequence, BOOL ownerShown)
+{
+    BRIDGE_SHARED *shared = BridgeEnsureShared();
+    BOOL committed = FALSE;
+    if (shared == NULL || sequence == 0 || !BridgeTryLock(shared)) return FALSE;
+    if (shared->state.phase == BRIDGE_PHASE_HANDSHAKE && shared->state.requestValid &&
+        (DWORD)shared->state.requestSequence == sequence && shared->state.requestClaimed == 1 &&
+        InterlockedCompareExchange(&shared->enabled, 0, 0) != 0)
+        committed = BridgeRequestCommit(&shared->requestVerdict, sequence, ownerShown);
+    BridgeUnlock(shared);
+    return committed;
 }
 
 BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)

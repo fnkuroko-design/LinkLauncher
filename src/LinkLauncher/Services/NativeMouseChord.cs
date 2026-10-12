@@ -64,6 +64,8 @@ internal sealed class NativeMouseChord : IDisposable
     }
 
     internal bool TryTakeRequest(uint sequence) => !_disposed && _api.TakeRequest(sequence) != 0;
+    internal bool TryCommitRequest(uint sequence, bool ownerShown) =>
+        !_disposed && _api.CommitRequest(sequence, ownerShown ? 1 : 0) != 0;
 
     internal void ClearMenuGuard()
     {
@@ -91,6 +93,8 @@ internal sealed class NativeMouseChord : IDisposable
     private delegate uint ReadFunction();
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     private delegate int TakeFunction(uint sequence);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate int CommitFunction(uint sequence, int ownerShown);
 
     private sealed class Bindings
     {
@@ -103,6 +107,7 @@ internal sealed class NativeMouseChord : IDisposable
         internal readonly ReadFunction Status;
         internal readonly ReadFunction HasCandidate;
         internal readonly TakeFunction TakeRequest;
+        internal readonly CommitFunction CommitRequest;
 
         internal Bindings(string path)
         {
@@ -116,6 +121,7 @@ internal sealed class NativeMouseChord : IDisposable
             Status = Export<ReadFunction>(library, "BridgeStatus");
             HasCandidate = Export<ReadFunction>(library, "BridgeHasCandidate");
             TakeRequest = Export<TakeFunction>(library, "BridgeTakeRequest");
+            CommitRequest = Export<CommitFunction>(library, "BridgeCommitRequest");
         }
 
         private static T Export<T>(IntPtr library, string name) where T : Delegate =>
