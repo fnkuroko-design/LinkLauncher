@@ -31,3 +31,15 @@ API仕様: [Microsoft SHGetFileInfoW](https://learn.microsoft.com/en-us/windows/
 最終記録は `artifacts/checks/dev10-icons-20261013-010417/test-result-6.txt`。ライト／ダークの描画結果は同フォルダーの `icon-results-6/icons-light.png` と `icons-dark.png`。失敗時の記録も保持する。検証用ショートカット・ファイル・画像は同フォルダー内だけに作成し、配布物へ含めない。
 
 新版本体の実起動、ユーザーの登録データによる一覧・スクロール操作はこの試験には含まない。入力フックを登録するMainWindowは検証で作らず、マウス入力生成・カーソル自動移動・Computer Useは行っていない。Windowsの全ファイル形式・全Shell拡張の網羅確認は行っていない。
+
+## 配布物
+
+- 配布ソース: `2c03532606b47d63b251096ed957f0191983264e`。Release / win-x64のビルドは警告0・エラー0、Publish.ps1によるframework-dependent publishも成功。
+- EXEのFileVersionは `0.1.3.10`、ProductVersionは `0.1.3-dev.10+2c03532606b47d63b251096ed957f0191983264e`。
+- ZIP: `artifacts/releases/LinkLauncher-v0.1.3-dev.10-win-x64.zip`、192,976 bytes、展開後414,345 bytes。
+- SHA-256: `1af585eedf66ae1ab1ff062ca3a2e22a662742a9d7b5aba64c930379d144ac20`。sidecarと一致。
+- 全10ファイルが `LinkLauncher/` 配下にあり、CRC、配布フォルダーと新規展開先の全ハッシュ一致を確認。ランタイム、ユーザーデータ、PDB、ログ、検証用ファイル・ショートカット・画像を含めない。ライセンスと第三者通知を同梱する。
+- .NET 10 Core/Desktop共有ランタイムを参照し、入力補助DLLはx64、importsはUSER32/KERNEL32のみ。診断用共有セクションとロガーを含めない。既存12個のZIPは変更前のハッシュと一致した。
+- パッケージ作成直前・直後の `library.json` ハッシュは一致。現在常駐している `C:\APP\LinkLauncher\LinkLauncher.exe` は終了・上書き・切替していない。スタートアップ先も変更していない。
+
+検証済みの開発版ZIPを保持する。実際の一覧での最終手動確認は、常駐版をトレイから終了してこの開発版を起動する。戻す場合は開発版をトレイから終了し、保持されている `C:\APP\LinkLauncher\LinkLauncher.exe` を起動する。比較時は設定を保存せず、スタートアップ先を変更しない。GitHubへのpush・公開は行っていない。
