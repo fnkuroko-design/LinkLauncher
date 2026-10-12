@@ -32,4 +32,13 @@ PDF手書き、Codex、デスクトップ、タスクバーなどの実入力の
 
 ## 配布
 
-配布確認の結果は完成後に追記します。正式版v0.1.2と完成済みdev.11までの成果物は保持し、GitHubへのpush・公開は本作業に含めません。
+- 配布ソース: `fbdbfe2b943dbe318f558643f61e6cb0bc302c94`。Release / win-x64 / framework-dependent publish成功。FileVersion `0.1.3.12`、ProductVersion `0.1.3-dev.12+fbdbfe2b943dbe318f558643f61e6cb0bc302c94`。
+- ZIP: `artifacts/releases/LinkLauncher-v0.1.3-dev.12-win-x64.zip`、195,143 bytes、展開後420,214 bytes。
+- SHA-256: `dbbb16f9a756e1df99af0f6617b64e9bf1a47ef2da68f8b6c22db20d025195b9`。sidecarと一致。
+- 全10ファイルが `LinkLauncher/` 配下。CRC、配布フォルダーと新規展開先の全ハッシュ一致を確認しました。共有フレームワークは.NET 10 Core/Desktop。ランタイム・ユーザーデータ・PDB・ログ・試験データを含めず、ライセンス文書を同梱します。
+- native DLLはx64、importsはUSER32/KERNEL32のみ。診断共有セクション・ロガーを含めません。
+- 既存14個のZIPのハッシュが開始前と一致し、登録データ `library.json` のハッシュも一致しました。確認後もdev.11（PID 34004）が同じ配布フォルダーから常駐しています。dev.12の実EXEの起動と実入力試験は未実施です。
+
+配布確認は `package-result.json`、保持確認は `preservation-result.json` に記録しています。正式版v0.1.2と完成済みdev.11までの成果物を保持し、GitHubへのpush・公開は行っていません。
+
+dev.12を手動確認する場合は、常駐dev.11をトレイの「終了」で閉じてから、`artifacts/releases/LinkLauncher-v0.1.3-dev.12-win-x64/LinkLauncher/LinkLauncher.exe` を起動します。戻す場合はdev.12をトレイから終了し、保持済みdev.11の同名EXEを起動できます。比較中は設定を保存せず、スタートアップ先を変更しません。連続の右＋左呼び出し、両解放後の最初の左クリックと検索入力、静止した通常の右クリック・右ドラッグを少数確認する範囲が候補です。
